@@ -14,7 +14,11 @@ FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/
-RUN npm ci
+# Configure npm for high-speed download & fast network retry
+RUN npm config set fetch-retries 5 \
+    && npm config set fetch-retry-mintimeout 10000 \
+    && npm config set fetch-retry-maxtimeout 60000 \
+    && npm install --prefer-offline --no-audit --no-fund
 
 # Stage 3: Build Application
 FROM base AS builder
