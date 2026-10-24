@@ -1,0 +1,5 @@
+import Link from "next/link";
+import { ArrowLeft, ChevronRight, Info, Save } from "lucide-react";
+export function EditorLayout({resource,title,description,children}:{resource:string;title:string;description:string;children:React.ReactNode}){
+ return <><nav className="breadcrumbs" aria-label="Breadcrumb"><Link href={`/${resource}`}>{resource[0].toUpperCase()+resource.slice(1)}</Link><ChevronRight size={16}/><span>{title}</span></nav><div className="editor-heading"><Link href={`/${resource}`} className="back-link"><ArrowLeft size={20}/>Back to {resource}</Link><h1>{title}</h1><p>{description}</p></div><div className="editor-grid"><section className="panel editor-panel"><div className="panel-header"><div><h2>Record details</h2><p>Fields marked * are required.</p></div><Save size={22} className="muted"/></div><div className="panel-body">{children}</div></section><aside className="editor-help"><Info size={25}/><h3>Keep your records clear</h3><p>Use the official name and review the details before saving. Your changes will appear in the management workspace.</p><p>Cancel returns to the list without saving this form.</p></aside></div></>;
+}

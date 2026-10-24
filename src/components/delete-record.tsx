@@ -1,0 +1,17 @@
+"use client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Trash2, TriangleAlert } from "lucide-react";
+import { api } from "@/lib/client-api";
+import { ErrorBox, Spinner } from "./common";
+
+type RecordSummary={id:number;name?:string;displayName?:string;title?:string;originalName?:string;season?:string};
+export function DeleteRecord({resource,recordId}:{resource:string;recordId:number}){
+ const singular:Record<string,string>={teams:'team',players:'player',franchises:'franchise',matches:'match',tournaments:'tournament',media:'media asset'};
+ const router=useRouter(),[record,setRecord]=useState<RecordSummary|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[confirmed,setConfirmed]=useState(false);
+ useEffect(()=>{let active=true;const request=resource==='media'?api<RecordSummary[]>('/api/media').then(rows=>{const row=rows.find(r=>r.id===recordId);if(!row)throw new Error('Media record not found');return row}):api<RecordSummary>(`/api/${resource}/${recordId}`);request.then(row=>{if(active)setRecord(row)}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[resource,recordId]);
+ const remove=async()=>{if(!record||!confirmed)return;setBusy(true);setError('');try{await api(`/api/${resource}/${recordId}`,{method:'DELETE'});router.push(`/${resource}`);router.refresh()}catch(e){setError(e instanceof Error?e.message:'Delete failed');setBusy(false)}};
+ const impact:Record<string,string>={franchises:'This removes its teams, players and standings. Deletion is blocked when its teams are referenced by match, toss or innings records.',teams:'This removes its players and standings. Deletion is blocked when the team is referenced by match, toss or innings records.',players:'This also removes the player’s match statistics.',tournaments:'This removes the tournament and its standings. Match records are retained without this tournament.',matches:'This also removes its toss, innings and player statistics.',media:'This removes the uploaded file and library record. Existing image links may stop working.'};
+ return <><Link href={`/${resource}`} className="back-link"><ArrowLeft/>Back to {resource}</Link><div className="editor-heading"><h1>Delete {singular[resource]||'record'}</h1><p>Review the record and its related data before deleting.</p></div>{loading?<Spinner/>:<section className="panel delete-panel"><div className="delete-heading"><span className="delete-icon"><Trash2 size={28}/></span><div><h2>{record?.displayName||record?.name||record?.title||record?.originalName||'Record unavailable'}</h2>{record?.season&&<p>{record.season}</p>}</div></div>{error&&<ErrorBox message={error}/>}<div className="delete-impact"><TriangleAlert size={23}/><div><strong>This action is permanent.</strong><p>{impact[resource]}</p></div></div><label className="check delete-check"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/>I understand and want to delete this record.</label><div className="form-actions"><Link href={`/${resource}`} className="button secondary">Cancel</Link><button className="button danger-solid" disabled={!record||!confirmed||busy} onClick={remove}><Trash2 size={20}/>{busy?'Deleting…':'Delete permanently'}</button></div></section>}</>;
+}

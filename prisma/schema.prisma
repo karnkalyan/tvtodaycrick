@@ -1,0 +1,340 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlayerRole {
+  BATSMAN
+  BOWLER
+  ALL_ROUNDER
+  WICKET_KEEPER
+}
+
+enum BattingStyle {
+  RIGHT_HAND
+  LEFT_HAND
+}
+
+enum BowlingStyle {
+  RIGHT_ARM_FAST
+  RIGHT_ARM_MEDIUM
+  LEFT_ARM_FAST
+  LEFT_ARM_MEDIUM
+  OFF_SPIN
+  LEG_SPIN
+  LEFT_ARM_ORTHODOX
+  LEFT_ARM_CHINAMAN
+  NONE
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum MatchStage {
+  LEAGUE
+  QUALIFIER
+  ELIMINATOR
+  FINAL
+  FRIENDLY
+}
+
+enum TossDecision {
+  BAT
+  BOWL
+}
+
+enum InningsStatus {
+  NOT_STARTED
+  LIVE
+  COMPLETED
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  OTHER
+}
+
+model Tournament {
+  id             Int      @id @default(autoincrement())
+  name           String   @db.VarChar(150)
+  shortName      String   @db.VarChar(50)
+  season         String   @db.VarChar(20)
+  country        String   @default("Nepal")
+  logoUrl        String?
+  primaryColor   String   @default("#2563EB")
+  secondaryColor String   @default("#F8FAFC")
+  startDate      DateTime?
+  endDate        DateTime?
+  venue          String?
+  description    String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  teams   TournamentTeam[]
+  matches Match[]
+
+  @@unique([name, season])
+  @@index([season])
+}
+
+model Franchise {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  shortName   String?
+  ownerName   String?
+  email       String?
+  phone       String?
+  address     String?  @db.Text
+  description String?  @db.Text
+  logoUrl     String?
+  website     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  teams Team[]
+}
+
+model Team {
+  id             Int      @id @default(autoincrement())
+  franchiseId    Int
+  name           String
+  shortName      String
+  primaryColor   String   @default("#0F172A")
+  secondaryColor String   @default("#F8FAFC")
+  accentColor    String?
+  themeName      String?
+  logoUrl        String?
+  homeGround     String?
+  city           String?
+  country        String?
+  description    String?  @db.Text
+  foundedYear    Int?
+  slogan         String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  franchise       Franchise         @relation(fields: [franchiseId], references: [id], onDelete: Cascade)
+  players         Player[]
+  homeMatches     Match[]            @relation("HomeTeam")
+  awayMatches     Match[]            @relation("AwayTeam")
+  tossWins        Toss[]             @relation("TossWinner")
+  wonMatches      Match[]            @relation("MatchWinner")
+  stats           PlayerMatchStat[]
+  tournamentTeams TournamentTeam[]
+  innings         MatchInnings[]
+
+  @@unique([franchiseId, name])
+  @@index([franchiseId])
+}
+
+model TournamentTeam {
+  id           Int   @id @default(autoincrement())
+  tournamentId Int
+  teamId       Int
+  position     Int?
+  played       Int   @default(0)
+  won          Int   @default(0)
+  lost         Int   @default(0)
+  tied         Int   @default(0)
+  noResult     Int   @default(0)
+  points       Int   @default(0)
+  netRunRate   Float @default(0)
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, teamId])
+  @@index([tournamentId, points, netRunRate])
+}
+
+model Player {
+  id             Int          @id @default(autoincrement())
+  teamId         Int
+  firstName      String
+  lastName       String
+  displayName    String
+  jerseyNumber   Int?
+  dateOfBirth    DateTime?
+  nationality    String?
+  role           PlayerRole
+  battingStyle   BattingStyle?
+  bowlingStyle   BowlingStyle @default(NONE)
+  imageUrl       String?
+  phone          String?
+  email          String?
+  bio            String?      @db.Text
+  isCaptain      Boolean      @default(false)
+  isWicketKeeper Boolean      @default(false)
+  isOverseas     Boolean      @default(false)
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  team  Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  stats PlayerMatchStat[]
+
+  @@index([teamId])
+  @@index([displayName])
+  @@unique([teamId, displayName])
+}
+
+model Match {
+  id             Int         @id @default(autoincrement())
+  tournamentId   Int?
+  matchNumber    String?
+  title          String
+  stage          MatchStage  @default(LEAGUE)
+  venue          String?
+  startTime      DateTime
+  status         MatchStatus @default(SCHEDULED)
+  overs          Int         @default(20)
+  homeTeamId     Int
+  awayTeamId     Int
+  winnerTeamId   Int?
+  resultText     String?
+  playerOfMatch  String?
+  notes          String?     @db.Text
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  tournament Tournament? @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
+  homeTeam   Team        @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Restrict)
+  awayTeam   Team        @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Restrict)
+  toss       Toss?
+  winnerTeam Team?       @relation("MatchWinner", fields: [winnerTeamId], references: [id], onDelete: SetNull)
+  stats      PlayerMatchStat[]
+  innings    MatchInnings[]
+
+  @@index([tournamentId])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+  @@index([startTime])
+}
+
+model Toss {
+  id           Int          @id @default(autoincrement())
+  matchId      Int          @unique
+  winnerTeamId Int
+  decision     TossDecision
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  match      Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  winnerTeam Team  @relation("TossWinner", fields: [winnerTeamId], references: [id], onDelete: Restrict)
+
+  @@index([winnerTeamId])
+}
+
+model MatchInnings {
+  id            Int           @id @default(autoincrement())
+  matchId       Int
+  teamId        Int
+  inningsNumber Int           @default(1)
+  runs          Int           @default(0)
+  wickets       Int           @default(0)
+  balls         Int           @default(0)
+  extras        Int           @default(0)
+  target        Int?
+  status        InningsStatus @default(NOT_STARTED)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team  Team  @relation(fields: [teamId], references: [id], onDelete: Restrict)
+
+  @@unique([matchId, inningsNumber])
+  @@index([matchId])
+  @@index([teamId])
+}
+
+model PlayerMatchStat {
+  id           Int      @id @default(autoincrement())
+  matchId      Int
+  playerId     Int
+  teamId       Int
+  innings      Int      @default(1)
+  runs         Int      @default(0)
+  ballsFaced   Int      @default(0)
+  fours        Int      @default(0)
+  sixes        Int      @default(0)
+  wickets      Int      @default(0)
+  ballsBowled  Int      @default(0)
+  runsConceded Int      @default(0)
+  maidens      Int      @default(0)
+  catches      Int      @default(0)
+  stumpings    Int      @default(0)
+  runOuts      Int      @default(0)
+  isOut        Boolean  @default(false)
+  dismissal    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  match  Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, playerId, innings])
+  @@index([matchId])
+  @@index([playerId])
+  @@index([teamId])
+}
+
+model MediaAsset {
+  id           Int       @id @default(autoincrement())
+  fileName     String    @unique
+  originalName String
+  url          String
+  mimeType     String
+  size         Int
+  kind         MediaKind @default(OTHER)
+  altText      String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([kind])
+  @@index([createdAt])
+}
+
+model NplSourceSnapshot {
+  season          String   @id @db.VarChar(20)
+  payload         Json
+  fetchedAt       DateTime
+  rostersFetchedAt DateTime
+  lastAttemptAt   DateTime
+  lastError       String?  @db.Text
+}
+
+model NplSourceSettings {
+  season       String   @id @db.VarChar(20)
+  sourceUrl    String   @db.VarChar(500)
+  secondaryUrl String?  @db.VarChar(500)
+  updatedAt    DateTime @updatedAt
+}
+
+model BroadcastState {
+  id        String   @id @default("current")
+  state     Json
+  updatedAt DateTime @updatedAt
+}
+
+model BroadcastEvent {
+  id        Int      @id @default(autoincrement())
+  action    String
+  layer     String?
+  payload   Json?
+  timestamp DateTime @default(now())
+
+  @@index([action])
+  @@index([timestamp])
+}

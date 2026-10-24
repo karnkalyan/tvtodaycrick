@@ -1,0 +1,14 @@
+node_modules
+.next
+.env
+.env.local
+.env.*.local
+coverage
+*.log
+.DS_Store
+scratch/
+.system_generated/
+.extract-payload.cjs
+tsconfig.tsbuildinfo
+public/uploads/*
+!public/uploads/.gitkeep

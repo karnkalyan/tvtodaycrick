@@ -1,0 +1,157 @@
+import { WebSocketServer, WebSocket } from "ws";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
+const PORT = Number(process.env.WS_PORT || 3001);
+
+let latestState: any = null;
+
+async function initDbState() {
+  try {
+    const record = await (prisma as any).broadcastState.findUnique({
+      where: { id: "current" },
+    });
+    if (record?.state) {
+      latestState = record.state;
+      console.log("[NPL WebSocket] Loaded initial broadcast state from MySQL database");
+    }
+  } catch (err) {
+    console.warn("[NPL WebSocket] Could not load state from DB on startup:", err);
+  }
+}
+
+async function persistState(action: string, layer?: string, payload?: any) {
+  if (!latestState) return;
+  try {
+    await (prisma as any).broadcastState.upsert({
+      where: { id: "current" },
+      create: { id: "current", state: latestState },
+      update: { state: latestState },
+    });
+
+    await (prisma as any).broadcastEvent.create({
+      data: {
+        action,
+        layer: layer || null,
+        payload: payload || null,
+      },
+    });
+  } catch (err) {
+    console.error("[NPL WebSocket] Error persisting state to DB:", err);
+  }
+}
+
+export function startWebSocketServer(port = PORT): WebSocketServer {
+  initDbState();
+
+  const wss = new WebSocketServer({ port }, () => {
+    console.log(`[NPL WebSocket] Broadcast server running on ws://localhost:${port}`);
+  });
+
+  wss.on("connection", async (ws: WebSocket) => {
+    // Always refresh latest state directly from MySQL database so clients never receive stale state
+    try {
+      const record = await (prisma as any).broadcastState.findUnique({
+        where: { id: "current" },
+      });
+      if (record?.state) {
+        latestState = record.state;
+      }
+    } catch (err) {
+      console.warn("[NPL WebSocket] Error reading fresh DB state on client connection:", err);
+    }
+
+    // Send welcome & latest state
+    if (latestState) {
+      ws.send(JSON.stringify({ type: "init", state: latestState, timestamp: Date.now() }));
+    }
+
+    ws.on("message", (raw: Buffer | string) => {
+      try {
+        const text = raw.toString();
+        const msg = JSON.parse(text);
+        const actionType = msg.action || msg.type;
+
+        if (!latestState) latestState = {};
+        if (!latestState.ui) latestState.ui = {};
+
+        // Track and persist layer / graphics states
+        if (actionType === "show") {
+          const graphicId = msg.id || msg.data?.id;
+          if (graphicId === "scorebar" || graphicId === "compactBug") {
+            latestState.ui.scoreMode = graphicId;
+          } else {
+            latestState.ui.graphic = graphicId;
+          }
+          persistState("show", graphicId, msg);
+        } else if (actionType === "stopAll" || actionType === "clear") {
+          latestState.ui.graphic = null;
+          if (msg.clearScores || msg.stopScores) {
+            latestState.ui.scoreMode = "hidden";
+          }
+          persistState("stopAll", "all", msg);
+        } else if (actionType === "stopLayer") {
+          const graphicId = msg.id || msg.layer;
+          if (graphicId === "scorebar" || graphicId === "compactBug") {
+            latestState.ui.scoreMode = "hidden";
+          } else if (latestState.ui.graphic === graphicId) {
+            latestState.ui.graphic = null;
+          }
+          persistState("stopLayer", graphicId, msg);
+        } else if (actionType === "scoreMode") {
+          latestState.ui.scoreMode = msg.mode || msg.data?.mode;
+          persistState("scoreMode", latestState.ui.scoreMode, msg);
+        } else if (actionType === "hideScores") {
+          latestState.ui.scoreMode = "hidden";
+          persistState("hideScores", "scoreMode", msg);
+        } else if (actionType === "updateData" || actionType === "dataUpdated") {
+          const payload = msg.payload || msg.data || {};
+          latestState = {
+            ...(latestState || {}),
+            ...payload,
+            score: { ...(latestState?.score || {}), ...(payload.score || {}) },
+            live: { ...(latestState?.live || {}), ...(payload.live || {}) },
+            match: { ...(latestState?.match || {}), ...(payload.match || {}) },
+          };
+          if (payload.fow !== undefined) latestState.fow = payload.fow;
+          persistState("updateData", undefined, msg);
+        } else if (actionType === "scoreUpdate") {
+          latestState.score = { ...(latestState?.score || {}), ...(msg.data || msg.payload) };
+          persistState("scoreUpdate", undefined, msg);
+        } else if (actionType === "action") {
+          persistState("action", msg.name, msg);
+        } else if (actionType === "stinger") {
+          persistState("stinger", msg.event, msg);
+        }
+
+        // Broadcast to all connected clients
+        wss.clients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(text);
+          }
+        });
+      } catch (err) {
+        console.error("[NPL WebSocket] Error parsing message:", err);
+      }
+    });
+
+    ws.on("error", (err) => {
+      console.warn("[NPL WebSocket] Client error:", err.message);
+    });
+  });
+
+  wss.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.log(`[NPL WebSocket] Port ${port} is already active and serving connections.`);
+    } else {
+      console.error("[NPL WebSocket] Server error:", err);
+    }
+  });
+
+  return wss;
+}
+
+// If run directly via tsx
+if (process.argv[1]?.includes("ws-server")) {
+  startWebSocketServer();
+}

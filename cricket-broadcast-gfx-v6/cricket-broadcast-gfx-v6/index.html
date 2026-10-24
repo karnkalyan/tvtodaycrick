@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1,viewport-fit=cover" name="viewport"/>
+<meta content="dark" name="color-scheme"/>
+<title>NPL Broadcast Graphics V6</title>
+<link href="styles.css" rel="stylesheet"/>
+</head>
+<body>
+<main id="viewport">
+<section aria-label="Cricket broadcast output" class="stage" id="stage">
+<div aria-hidden="true" class="preview-scene">
+<div class="scene-sky"></div>
+<div class="scene-lights scene-lights-left"></div>
+<div class="scene-lights scene-lights-right"></div>
+<div class="scene-field"></div>
+</div>
+<div aria-hidden="true" class="safe-frame"></div>
+<div aria-hidden="true" class="broadcast-atmosphere"><i></i><i></i><i></i></div>
+<div class="channel-mark">NPL 2026 <b>LIVE</b></div>
+<!-- 01 LIVE SCOREBAR -->
+<section class="gfx scorebar is-visible" data-gfx="scorebar" id="scorebar">
+<div class="scorebar-main">
+<div class="team-chip team-chip-a">
+<div class="team-monogram" id="teamAMonogram">KAG</div>
+<div class="team-stack"><b id="teamAName">KATHMANDU GURKHAS</b><span id="inningsText">CHASE · 2ND INNINGS</span></div>
+</div>
+<div class="score-lockup">
+<div class="score-value"><span id="runs">146</span><i>/</i><span id="wickets">4</span></div>
+<div class="overs-value"><b id="overs">16.2</b><span>OVERS</span></div>
+</div>
+<div class="batters-block">
+<div class="batter-line striker"><span class="strike-mark"></span><b id="strikerName">BHIM SHARKI</b><strong id="strikerRuns">58</strong><small id="strikerBalls">41</small></div>
+<div class="batter-line"><span class="strike-mark"></span><b id="nonStrikerName">AADIL ALAM</b><strong id="nonStrikerRuns">27</strong><small id="nonStrikerBalls">21</small></div>
+</div>
+<div class="bowler-block">
+<div class="bowler-line"><span class="ball-dot"></span><b id="bowlerName">LALIT RAJBANSHI</b><strong id="bowlerFigures">1/24</strong><small id="bowlerOvers">3.2</small></div>
+<div class="recent-line"><span>THIS OVER</span><div class="recent-balls" id="recentBalls"></div></div>
+</div>
+<div class="team-chip team-chip-b">
+<div class="team-stack right"><b id="teamBName">JANAKPUR BOLTS</b><span id="rateText">CRR 8.93</span></div>
+<div class="team-monogram alt" id="teamBMonogram">JAB</div>
+</div>
+</div>
+<div class="scorebar-foot">
+<span id="matchLabel">NPL 2026 · MATCH 05 · KIRTIPUR</span>
+<b id="requirement">KATHMANDU NEED 27 FROM 22 BALLS</b>
+<span id="venueLabel">TU INTERNATIONAL CRICKET GROUND</span>
+</div>
+</section>
+<!-- 02 COMPACT SCOREBUG -->
+<section class="gfx compact-bug is-hidden theme-lime" data-gfx="compactBug" id="compactBug">
+<div class="compact-team"><span id="compactTeam">KAG</span><b id="compactScore">146/4</b></div>
+<div class="compact-meta"><b id="compactOvers">16.2</b><span>OVERS</span></div>
+<div class="compact-batter"><span>▶</span><b id="compactStrikerName">BHIM SHARKI</b><strong><span id="compactStrikerRuns">58</span> <small id="compactStrikerBalls">41</small></strong></div>
+<div class="compact-bowler"><b id="compactBowlerName">LALIT RAJBANSHI</b><strong><span id="compactBowlerFigures">1/24</span> <small id="compactBowlerOvers">3.2</small></strong></div>
+</section>
+<!-- 03 LOWER THIRD -->
+<section class="gfx lower-third is-hidden theme-cobalt" data-gfx="lowerThird" id="lowerThird">
+<div class="portrait-slab">
+<div class="portrait-placeholder" id="ltPhoto"><span id="ltInitials">KK</span></div>
+</div>
+<div class="lower-copy">
+<span class="eyebrow" id="ltEyebrow">CAPTAIN · KATHMANDU GURKHAS</span>
+<h2 id="ltName">KARAN KC</h2>
+<div class="lower-detail"><span id="ltRole">BOWLING ALL-ROUNDER</span><b id="ltStat">19 <small>JERSEY</small></b></div>
+</div>
+<div class="jersey-number" id="ltNumber">19</div>
+</section>
+<!-- 04 MATCHUP -->
+<section class="gfx full-card matchup-card is-hidden theme-orange" data-gfx="matchup" id="matchup">
+<header class="card-title"><span>MATCH DAY</span><b>NEPAL PREMIER LEAGUE · 2026</b></header>
+<div class="matchup-grid">
+<div class="match-team">
+<div class="mega-monogram" id="matchupACode">KAG</div>
+<small>HOME</small><h2 id="matchupAName">KATHMANDU GURKHAS</h2>
+</div>
+<div class="match-center"><span>NPL · MATCH 05</span><strong>VS</strong><small>16:30 NPT</small></div>
+<div class="match-team right">
+<div class="mega-monogram alt" id="matchupBCode">JAB</div>
+<small>AWAY</small><h2 id="matchupBName">JANAKPUR BOLTS</h2>
+</div>
+</div>
+<footer class="card-foot">TU INTERNATIONAL CRICKET GROUND <span>·</span> KIRTIPUR <span>·</span> NPL SEASON 3</footer>
+</section>
+<!-- 05 TOSS -->
+<section class="gfx full-card editorial-card is-hidden theme-emerald" data-gfx="toss" id="toss">
+<header class="card-title"><span>TOSS</span><b>NPL · MATCH 05</b></header>
+<div class="editorial-layout">
+<div class="editorial-mark"><div class="mega-monogram alt" id="tossCode">JAB</div><span id="tossTeamName">JANAKPUR BOLTS</span></div>
+<div class="editorial-copy"><small>JANAKPUR BOLTS WON THE TOSS</small><h2>WE'LL<br/><em>BAT FIRST</em></h2><p>Fresh surface at Kirtipur — put runs on the board.</p></div>
+<div class="side-stat"><span>CAPTAIN</span><b>ANIL SAH</b><small>DECISION · BAT</small></div>
+</div>
+</section>
+<!-- 06 PLAYING XI -->
+<section class="gfx full-card list-card is-hidden theme-teal" data-gfx="playingXI" id="playingXI">
+<header class="card-title"><span>PLAYING XI</span><b id="xiTeamName">KATHMANDU GURKHAS</b></header>
+<div class="xi-layout">
+<div class="xi-lead"><div class="mega-monogram" id="xiTeamCode">KAG</div><h2 id="xiTeamNameBig">KATHMANDU GURKHAS</h2><span>PLAYING XI</span><small>NPL SEASON 3 · 2026</small></div>
+<div class="xi-list" id="xiList"></div>
+</div>
+</section>
+<!-- 07 BATTER PROFILE -->
+<section class="gfx full-card profile-card is-hidden theme-violet" data-gfx="batterProfile" id="batterProfile">
+<div class="profile-photo"><div class="profile-placeholder" id="profilePhoto"><span id="profileInitials">BS</span></div><div class="profile-number">27</div></div>
+<div class="profile-copy">
+<span class="eyebrow">BATTER PROFILE · KATHMANDU GURKHAS</span>
+<h2 id="profileName">BHIM SHARKI</h2>
+<p id="profileRole">RIGHT-HANDED BATTER</p>
+<div class="profile-stats" id="profileStats"></div>
+</div>
+</section>
+<!-- 08 BOWLER PROFILE -->
+<section class="gfx full-card profile-card reverse is-hidden theme-amber" data-gfx="bowlerProfile" id="bowlerProfile">
+<div class="profile-photo"><div class="profile-placeholder alt"><span>LR</span></div><div class="profile-number">27</div></div>
+<div class="profile-copy">
+<span class="eyebrow">BOWLER PROFILE · JANAKPUR BOLTS</span>
+<h2>LALIT RAJBANSHI</h2><p>LEFT-ARM ORTHODOX</p>
+<div class="profile-stats">
+<div><span>MATCHES</span><b>28</b></div><div><span>WICKETS</span><b>41</b></div><div><span>AVERAGE</span><b>18.7</b></div><div><span>ECONOMY</span><b>6.54</b></div><div><span>BEST</span><b>4/17</b></div><div><span>DOT %</span><b>46.2</b></div>
+</div>
+</div>
+</section>
+<!-- 09 PLAYER COMPARISON -->
+<section class="gfx full-card compare-card is-hidden theme-red" data-gfx="comparison" id="comparison">
+<header class="card-title"><span>HEAD TO HEAD</span><b>BATTER vs BOWLER</b></header>
+<div class="compare-layout">
+<div class="compare-person"><div class="mini-portrait"><span>BS</span></div><small>BATTER</small><h2>BHIM SHARKI</h2><b>58 <span>41</span></b></div>
+<div class="compare-rows" id="compareRows"></div>
+<div class="compare-person right"><div class="mini-portrait alt"><span>LR</span></div><small>BOWLER</small><h2>LALIT RAJBANSHI</h2><b>1/24 <span>3.2</span></b></div>
+</div>
+</section>
+<!-- 10 PARTNERSHIP -->
+<section class="gfx lower-strip is-hidden theme-coral" data-gfx="partnership" id="partnership">
+<div class="strip-label"><span>PARTNERSHIP</span><b>5TH WICKET</b></div>
+<div class="strip-player"><span>▶</span><b>SURYAKUMAR</b><strong>62 <small>43</small></strong></div>
+<div class="partnership-value"><b>64</b><span>42 BALLS</span></div>
+<div class="strip-player right"><strong>27 <small>21</small></strong><b>AADIL ALAM</b></div>
+</section>
+<!-- 11 CHASE EQUATION -->
+<section class="gfx lower-strip chase-strip is-hidden theme-lime" data-gfx="chase" id="chase">
+<div class="strip-label"><span>CHASE</span><b>KATHMANDU GURKHAS</b></div>
+<div class="chase-big"><span>NEED</span><b>27</b><small>RUNS</small></div>
+<div class="chase-big"><span>FROM</span><b>22</b><small>BALLS</small></div>
+<div class="chase-small"><span>REQ. RATE</span><b>7.36</b></div>
+<div class="chase-small"><span>WICKETS</span><b>6</b></div>
+</section>
+<!-- 12 OVER SUMMARY -->
+<section class="gfx lower-strip over-strip is-hidden theme-sky" data-gfx="overSummary" id="overSummary">
+<div class="strip-label"><span>OVER 17</span><b>9 RUNS</b></div>
+<div class="over-balls"><i>1</i><i>1</i><i class="four">4</i><i>0</i><i>1</i><i class="six">6</i></div>
+<div class="over-copy"><b>LALIT RAJBANSHI</b><span>1/31 · 4.0 OV</span></div>
+</section>
+<!-- 13 FALL OF WICKETS -->
+<section class="gfx full-card table-card is-hidden theme-ruby" data-gfx="fow" id="fow">
+<header class="card-title"><span>FALL OF WICKETS</span><b>KATHMANDU GURKHAS</b></header>
+<div class="fow-list" id="fowRows"></div>
+</section>
+<!-- 14 INNINGS SUMMARY -->
+<section class="gfx full-card table-card is-hidden theme-indigo" data-gfx="inningsSummary" id="inningsSummary">
+<header class="card-title"><span>INNINGS SUMMARY</span><b>KATHMANDU · 146/4</b></header>
+<div class="summary-head"><span>BATTER</span><span>R</span><span>B</span><span>4s</span><span>6s</span><span>SR</span></div>
+<div class="summary-list" id="summaryRows"></div>
+<div class="table-footer"><span>EXTRAS <b>11</b></span><span>RUN RATE <b>5.79</b></span><span>OVERS <b>32.4</b></span></div>
+</section>
+<!-- 15 POINTS TABLE -->
+<section class="gfx full-card table-card is-hidden theme-purple" data-gfx="pointsTable" id="pointsTable">
+<header class="card-title"><span>NPL POINTS TABLE</span><b>SEASON 3 · DEMO STANDINGS</b></header>
+<div class="points-head"><span>POS</span><span>TEAM</span><span>M</span><span>W</span><span>L</span><span>PTS</span><span>NRR</span></div>
+<div class="points-list" id="pointsRows"></div>
+</section>
+<!-- 16 RESULT -->
+<section class="gfx full-card result-card is-hidden theme-gold" data-gfx="result" id="result">
+<header class="card-title"><span>FULL TIME</span><b>MATCH RESULT</b></header>
+<div class="result-layout">
+<div class="result-team"><div class="mega-monogram" id="resultACode">KAG</div><h2 id="resultAName">KATHMANDU GURKHAS</h2><b>174/5</b><span>19.1 OV</span></div>
+<div class="result-middle"><small>KATHMANDU GURKHAS WON</small><strong>BY 5<br/>WICKETS</strong><p>PLAYER OF THE MATCH<br/><b>BHIM SHARKI</b></p></div>
+<div class="result-team right"><div class="mega-monogram alt" id="resultBCode">JAB</div><h2 id="resultBName">JANAKPUR BOLTS</h2><b>171/7</b><span>20.0 OV</span></div>
+</div>
+</section>
+<!-- 17 PLAYER OF MATCH -->
+<section class="gfx full-card award-card is-hidden theme-plum" data-gfx="playerOfMatch" id="playerOfMatch">
+<div class="award-copy"><span>PLAYER OF THE MATCH</span><h2>BHIM<br/>SHARKI</h2><p>72 NOT OUT · 48 BALLS</p><div><b>7</b><small>FOURS</small><b>3</b><small>SIXES</small><b>150.0</b><small>STRIKE RATE</small></div></div>
+<div class="award-photo"><div class="profile-placeholder"><span>BS</span></div></div>
+</section>
+<!-- 18 REVIEW -->
+<section class="gfx review-card is-hidden theme-mono" data-gfx="review" id="review">
+<div class="review-icon"><span></span></div><small>DECISION REVIEW SYSTEM</small><h2 id="reviewWord">REVIEW</h2><p id="reviewSub">KATHMANDU GURKHAS REVIEW</p>
+</section>
+<!-- EVENT STINGER -->
+<section class="gfx lower-strip powerplay-strip is-hidden theme-orange" data-gfx="powerplay" id="powerplay">
+<div class="strip-label"><span>POWERPLAY</span><b>KATHMANDU GURKHAS</b></div>
+<div class="powerplay-score"><b>54/1</b><span>6 OVERS</span></div>
+<div class="powerplay-stat"><small>BOUNDARIES</small><b>8</b></div><div class="powerplay-stat"><small>DOT BALLS</small><b>14</b></div><div class="powerplay-stat"><small>RUN RATE</small><b>9.00</b></div>
+</section><section class="gfx full-card table-card bowling-card is-hidden theme-amber" data-gfx="bowlingCard" id="bowlingCard">
+<header class="card-title"><span>BOWLING CARD</span><b>JANAKPUR BOLTS</b></header>
+<div class="bowling-head"><span>BOWLER</span><span>O</span><span>M</span><span>R</span><span>W</span><span>ECON</span></div>
+<div class="bowling-list" id="bowlingRows"></div>
+<div class="table-footer"><span>OVERS <b>16.2</b></span><span>RUNS <b>146</b></span><span>WICKETS <b>4</b></span></div>
+</section><section class="gfx lower-strip projected-strip is-hidden theme-violet" data-gfx="projected" id="projected">
+<div class="strip-label"><span>PROJECTED SCORE</span><b>KATHMANDU GURKHAS</b></div>
+<div class="projection"><small>CURRENT RATE</small><b>179</b></div><div class="projection hot"><small>9.5 RPO</small><b>190</b></div><div class="projection"><small>10.5 RPO</small><b>200</b></div><div class="projection"><small>11.5 RPO</small><b>210</b></div>
+</section><section class="gfx stinger is-hidden" data-gfx="stinger" id="stinger">
+<div class="stinger-bg"></div>
+<div class="stinger-rule rule-a"></div><div class="stinger-rule rule-b"></div>
+<div class="stinger-copy"><span id="stingerKicker">BOUNDARY</span><h2 id="stingerWord">FOUR</h2><p id="stingerCaption">PERFECTLY TIMED</p></div>
+</section>
+</section>
+</main>
+<aside class="operator" id="operator">
+<header><div><b>NPL GFX · V6</b><span>Broadcast control · <i class="sync-status" id="syncStatus">MANUAL CUE</i> · <i class="fps-status" id="fpsStatus">FPS --</i></span></div><button id="collapseOperator" type="button">×</button></header>
+<nav class="operator-tabs">
+<button class="active" data-tab="live">LIVE</button><button data-tab="graphics">GRAPHICS</button><button data-tab="events">EVENTS</button><button data-tab="data">DATA</button>
+<button data-tab="motion">MOTION</button></nav>
+<div class="operator-panel active" data-panel="live">
+<p class="panel-label">Score</p>
+<div class="button-grid four"><button data-action="run1">+1</button><button data-action="run2">+2</button><button data-action="four">FOUR</button><button data-action="six">SIX</button><button data-action="dot">DOT</button><button data-action="wide">WIDE</button><button data-action="noBall">NO BALL</button><button class="danger" data-action="wicket">WICKET</button></div>
+<p class="panel-label">Score graphics</p>
+<div class="button-grid two"><button data-show="scorebar">FULL SCOREBAR</button><button data-show="compactBug">COMPACT BUG</button><button data-action="hideScores">HIDE SCORES</button><button data-action="reset">RESET</button></div>
+
+
+<p class="panel-label">Broadcast demo</p><div class="button-grid two"><button class="primary" data-action="demoAll">DEMO ALL GRAPHICS</button><button class="danger" data-action="stopDemo">STOP + CLEAR DEMO</button></div><button class="full danger" data-action="stopAll">CLEAR / STOP ALL GRAPHICS</button><p class="panel-help team-colour-note">Data is refresh-based. Only explicit SHOW / CLEAR / STINGER cues are sent to the clean output.</p></div>
+<div class="operator-panel" data-panel="graphics">
+<p class="panel-label">On-air graphics</p>
+<div class="button-grid two graphics-buttons">
+<button data-show="lowerThird">LOWER THIRD</button><button data-show="matchup">MATCHUP</button><button data-show="toss">TOSS</button><button data-show="playingXI">PLAYING XI</button><button data-show="batterProfile">BATTER PROFILE</button><button data-show="bowlerProfile">BOWLER PROFILE</button><button data-show="comparison">HEAD TO HEAD</button><button data-show="partnership">PARTNERSHIP</button><button data-show="chase">CHASE EQUATION</button><button data-show="overSummary">OVER SUMMARY</button><button data-show="fow">FALL OF WICKETS</button><button data-show="inningsSummary">INNINGS SUMMARY</button><button data-show="pointsTable">POINTS TABLE</button><button data-show="result">RESULT</button><button data-show="playerOfMatch">PLAYER OF MATCH</button><button data-show="review">REVIEW</button>
+<button data-show="powerplay">POWERPLAY</button><button data-show="bowlingCard">BOWLING CARD</button><button data-show="projected">PROJECTED SCORE</button></div>
+<button class="full danger" data-action="clearGraphic">CLEAR / STOP ALL GRAPHICS</button>
+</div>
+<div class="operator-panel" data-panel="events">
+<p class="panel-label">Stingers</p>
+<div class="button-grid two"><button data-event="four">FOUR</button><button data-event="six">SIX</button><button class="danger" data-event="wicket">WICKET</button><button data-event="fifty">FIFTY</button><button data-event="century">CENTURY</button><button data-event="freehit">FREE HIT</button><button data-event="review">REVIEW</button><button data-event="out">OUT</button></div><button class="full danger" data-action="stopAll">STOP EVENT / CLEAR ALL</button>
+</div>
+<div class="operator-panel" data-panel="data">
+<p class="panel-label">Teams &amp; match</p>
+<div class="fields two team-select-fields"><label>Team A<select id="teamASelect"><option selected="selected" value="KAG">Kathmandu Gurkhas</option><option value="JAB">Janakpur Bolts</option><option value="CHR">Chitwan Rhinos</option><option value="KAY">Karnali Yaks</option><option value="LUL">Lumbini Lions</option><option value="POA">Pokhara Avengers</option><option value="BIK">Biratnagar Kings</option><option value="SPR">Sudurpaschim Royals</option></select></label><label>Team B<select id="teamBSelect"><option value="KAG">Kathmandu Gurkhas</option><option selected="selected" value="JAB">Janakpur Bolts</option><option value="CHR">Chitwan Rhinos</option><option value="KAY">Karnali Yaks</option><option value="LUL">Lumbini Lions</option><option value="POA">Pokhara Avengers</option><option value="BIK">Biratnagar Kings</option><option value="SPR">Sudurpaschim Royals</option></select></label></div>
+<div class="fields two field-gap"><label>Match label<input id="matchLabelInput" value="NPL 2026 · MATCH 05 · KIRTIPUR"/></label><label>Venue<input id="venueInput" value="TU INTERNATIONAL CRICKET GROUND"/></label></div>
+<p class="panel-label">Live score</p>
+<div class="fields three"><label>Runs<input id="runsInput" type="number" value="146"/></label><label>Wkts<input id="wkInput" type="number" value="4"/></label><label>Overs<input id="oversInput" value="16.2"/></label></div>
+<div class="fields two field-gap"><label>Innings label<input id="inningsInput" value="CHASE · 2ND INNINGS"/></label><label>Rate text<input id="rateInput" value="CRR 8.93"/></label></div>
+<p class="panel-label">Batters</p>
+<div class="fields three"><label>Striker<input id="strikerNameInput" value="BHIM SHARKI"/></label><label>Runs<input id="strikerRunsInput" value="58"/></label><label>Balls<input id="strikerBallsInput" value="41"/></label></div>
+<div class="fields three field-gap"><label>Non-striker<input id="nonStrikerNameInput" value="AADIL ALAM"/></label><label>Runs<input id="nonStrikerRunsInput" value="27"/></label><label>Balls<input id="nonStrikerBallsInput" value="21"/></label></div>
+<p class="panel-label">Bowler &amp; equation</p>
+<div class="fields three"><label>Bowler<input id="bowlerNameInput" value="LALIT RAJBANSHI"/></label><label>Figures<input id="bowlerFiguresInput" value="1/24"/></label><label>Overs<input id="bowlerOversInput" value="3.2"/></label></div>
+<label class="field">Requirement<input id="requirementInput" value="KATHMANDU NEED 27 FROM 22 BALLS"/></label>
+<button class="full primary" data-action="applyData">SAVE DATA FOR NEXT REFRESH</button>
+<p class="panel-help">No live data synchronization. Edits are saved locally, but the clean output reads them only when you refresh that output page. Explicit graphics/stinger buttons are manual cues only. Keyboard: 4 / 6 / W stingers, S scorebar, C stop &amp; clear, O operator.</p>
+</div>
+<div class="operator-panel" data-panel="motion">
+<p class="panel-label">Motion system</p>
+<div class="motion-meter"><div><span>OUTPUT</span><b>HIGH REFRESH</b></div><strong>120Hz READY</strong></div>
+<label class="field range-field">Motion intensity <input id="motionIntensity" max="100" min="0" type="range" value="82"/></label>
+<div class="button-grid two"><button data-action="ambientToggle">AMBIENT ON/OFF</button><button data-action="replayGraphic">REPLAY CURRENT</button></div>
+<p class="panel-label">Animation layers</p>
+<div class="motion-chips"><span>GSAP REVEALS</span><span>ANIME TEXT WAVES</span><span>PARALLAX</span><span>NUMBER MORPH</span><span>ROW STAGGER</span><span>SPRING BOUNCE</span></div>
+<p class="panel-help">Animations use transform/opacity-first rendering and requestAnimationFrame. Actual FPS follows the browser, GPU, monitor and capture/output refresh rate.</p>
+</div></aside>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
