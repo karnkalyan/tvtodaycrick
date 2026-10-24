@@ -174,8 +174,23 @@ export default function BroadcastControllerPage() {
 
     function connect() {
       try {
-        const host = typeof window !== "undefined" ? window.location.hostname || "localhost" : "localhost";
-        ws = new WebSocket(`ws://${host}:3001`);
+        const envWs = process.env.NEXT_PUBLIC_WS_URL;
+        let wsUrl: string;
+        if (envWs && envWs.trim()) {
+          wsUrl = envWs;
+        } else if (typeof window !== "undefined") {
+          const isHttps = window.location.protocol === "https:";
+          if (isHttps) {
+            wsUrl = `wss://${window.location.host}/ws`;
+          } else {
+            const host = window.location.hostname || "localhost";
+            const port = window.location.port === "3211" ? "3212" : (window.location.port === "3000" ? "3001" : "3212");
+            wsUrl = `ws://${host}:${port}`;
+          }
+        } else {
+          wsUrl = "ws://localhost:3212";
+        }
+        ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
         ws.onopen = () => setWsConnected(true);

@@ -1787,10 +1787,22 @@
   let broadcastWs = null;
   function connectWebSocket(){
     try{
-      const host = (typeof window !== 'undefined' && window.location.hostname) ? window.location.hostname : 'localhost';
-      broadcastWs = new WebSocket(`ws://${host}:3001`);
+      let wsUrl = '';
+      if (typeof window !== 'undefined') {
+        const isHttps = window.location.protocol === 'https:';
+        if (isHttps) {
+          wsUrl = 'wss://' + window.location.host + '/ws';
+        } else {
+          const host = window.location.hostname || 'localhost';
+          const port = window.location.port === '3211' ? '3212' : (window.location.port === '3000' ? '3001' : '3212');
+          wsUrl = 'ws://' + host + ':' + port;
+        }
+      } else {
+        wsUrl = 'ws://localhost:3212';
+      }
+      broadcastWs = new WebSocket(wsUrl);
       broadcastWs.onopen = () => {
-        console.log('[Broadcast GFX] WebSocket connected to ws://' + host + ':3001');
+        console.log('[Broadcast GFX] WebSocket connected to ' + wsUrl);
       };
       broadcastWs.onmessage = (event) => {
         try{

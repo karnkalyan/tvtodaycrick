@@ -5,8 +5,8 @@ console.log("   TV TODAY NPL CRICKET MANAGEMENT SYSTEM — PRODUCTION ENGINE");
 console.log("==================================================================");
 console.log(`• Node Environment : ${process.env.NODE_ENV || "production"}`);
 console.log(`• Site URL         : ${process.env.NEXT_PUBLIC_SITE_URL || "https://cricket.tvtoday.com.np"}`);
-console.log(`• App Port         : ${process.env.PORT || 3000}`);
-console.log(`• WS Broadcast Port: ${process.env.WS_PORT || 3001}`);
+console.log(`• App Port         : ${process.env.PORT || 3211}`);
+console.log(`• WS Broadcast Port: ${process.env.WS_PORT || 3212}`);
 console.log("------------------------------------------------------------------");
 
 function runCommand(cmd, args, env = process.env) {
@@ -39,17 +39,17 @@ async function boot() {
       console.log("\n[2/4] Skipping database seed (SEED_DATABASE != true).");
     }
 
-    // 3. Start Broadcast WebSocket Server on port 3001
-    console.log("\n[3/4] Launching WebSocket broadcast engine on port " + (process.env.WS_PORT || 3001) + "...");
+    // 3. Start Broadcast WebSocket Server on port 3212
+    console.log("\n[3/4] Launching WebSocket broadcast engine on port " + (process.env.WS_PORT || 3212) + "...");
     const wsProcess = spawn("npx", ["tsx", "src/server/ws-server.ts"], {
       stdio: "inherit",
       shell: true,
-      env: { ...process.env, PORT: process.env.WS_PORT || "3001" },
+      env: { ...process.env, PORT: process.env.WS_PORT || "3212" },
     });
 
-    // 4. Start Next.js Production Web Server on port 3000
-    console.log("\n[4/4] Launching Next.js production server on port " + (process.env.PORT || 3000) + "...");
-    const nextProcess = spawn("npx", ["next", "start", "-p", process.env.PORT || "3000"], {
+    // 4. Start Next.js Production Web Server on port 3211
+    console.log("\n[4/4] Launching Next.js production server on port " + (process.env.PORT || 3211) + "...");
+    const nextProcess = spawn("npx", ["next", "start", "-p", process.env.PORT || "3211"], {
       stdio: "inherit",
       shell: true,
       env: process.env,

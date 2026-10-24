@@ -16,8 +16,8 @@ services:
     restart: always
     environment:
       NODE_ENV: production
-      PORT: 3000
-      WS_PORT: 3001
+      PORT: 3211
+      WS_PORT: 3212
       # Connect to existing running almari-mysql container on almari-network (port 3306)
       DATABASE_URL: "mysql://admin:quantumSql%40123@almari-mysql:3306/cricket_db"
       NEXT_PUBLIC_APP_NAME: "TV Today NPL Cricket Management"
@@ -29,8 +29,8 @@ services:
       SEED_MATCH_SCORES: "false"
       UPLOAD_MAX_MB: "25"
     ports:
-      - "3000:3000" # Web Application & Next.js API
-      - "3001:3001" # Real-Time Broadcast WebSocket Server
+      - "127.0.0.1:3211:3211" # Web Application & Next.js API (Reverse proxied by Nginx)
+      - "127.0.0.1:3212:3212" # Real-Time Broadcast WebSocket Server (Proxied via /ws by Nginx)
     volumes:
       - cricket_uploads:/app/public/uploads
     networks:

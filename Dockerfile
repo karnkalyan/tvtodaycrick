@@ -32,8 +32,8 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
-ENV WS_PORT=3001
+ENV PORT=3211
+ENV WS_PORT=3212
 
 # Copy artifacts from builder
 COPY --from=builder /app/package.json ./package.json
@@ -49,7 +49,7 @@ COPY --from=builder /app/tsconfig.json ./tsconfig.json
 # Create upload directory
 RUN mkdir -p /app/public/uploads
 
-EXPOSE 3000
-EXPOSE 3001
+EXPOSE 3211
+EXPOSE 3212
 
 CMD ["node", "scripts/start-production.mjs"]
