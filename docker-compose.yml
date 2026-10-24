@@ -45,4 +45,5 @@ volumes:
 # Connect to existing running network without recreating duplicate images or DBs
 networks:
   almari-network:
+    name: almari_almari-network
     external: true
