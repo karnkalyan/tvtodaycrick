@@ -4,8 +4,6 @@
 # Connected to existing running MySQL database container (almari-mysql)
 # ==============================================================================
 
-version: "3.8"
-
 services:
   # TV Today Cricket Application (Next.js 16 + WebSocket Broadcast Engine)
   cricket-app:
