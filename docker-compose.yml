@@ -31,8 +31,8 @@ services:
       SEED_MATCH_SCORES: "false"
       UPLOAD_MAX_MB: "25"
     ports:
-      - "127.0.0.1:3211:3211" # Web Application & Next.js API (Reverse proxied by Nginx)
-      - "127.0.0.1:3212:3212" # Real-Time Broadcast WebSocket Server (Proxied via /ws by Nginx)
+      - "3211:3211"
+      - "3212:3212"
     volumes:
       - cricket_uploads:/app/public/uploads
     networks:
