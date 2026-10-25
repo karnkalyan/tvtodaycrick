@@ -24,6 +24,9 @@ import {
   Link2,
   RefreshCw,
   Database,
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2,
   type LucideIcon,
 } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
@@ -85,6 +88,33 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+
+  const handleTruncateMatches = async () => {
+    setIsResetting(true);
+    try {
+      const res = await fetch(`/api/matches/reset?season=${encodeURIComponent(season.year)}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error?.message || "Reset failed");
+
+      setShowResetConfirm(false);
+      const details = data.data;
+      setResetSuccess(
+        `All match details truncated: ${details?.deletedInnings ?? 0} innings, ${details?.deletedStats ?? 0} player stats removed. All matches reset to SCHEDULED (0/0).`
+      );
+      setTimeout(() => setResetSuccess(null), 6000);
+
+      await season.resync();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to reset match details");
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   const sidebar = useRef<HTMLElement>(null);
   const menu = useRef<HTMLButtonElement>(null);
@@ -170,6 +200,7 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onTriggerSync={() => void season.resync().catch(() => {})}
+        onTriggerReset={() => setShowResetConfirm(true)}
       />
 
       {/* Main Standardized Minimalist Sidebar */}
@@ -359,6 +390,18 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
               <span>{season.busy ? "Syncing…" : "Fetch Data"}</span>
             </button>
 
+            {/* Complete Reset Match Details Button */}
+            <button
+              type="button"
+              className="button compact danger navbar-reset-btn"
+              onClick={() => setShowResetConfirm(true)}
+              disabled={season.busy || isResetting}
+              title="Complete Reset: Truncate all match scores, balls, overs, innings, player stats, and tosses back to scheduled 0/0"
+            >
+              <RotateCcw size={14} className={isResetting ? "spin" : ""} />
+              <span>Reset Match Data</span>
+            </button>
+
             <ThemeToggle />
           </div>
         </header>
@@ -368,6 +411,85 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
           {season.ready ? <div key={`${season.year}-${season.revision}`}>{children}</div> : <Spinner />}
         </main>
       </div>
+
+      {/* Confirmation Dialog for Complete Reset */}
+      {showResetConfirm && (
+        <div
+          className="reset-modal-backdrop"
+          onClick={() => !isResetting && setShowResetConfirm(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="reset-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="reset-modal-header">
+              <div className="reset-modal-icon">
+                <AlertTriangle size={24} />
+              </div>
+              <div className="reset-modal-title">
+                <h3>Truncate & Reset Match Details</h3>
+                <small>SEASON {season.year} · DESTRUCTIVE ACTION</small>
+              </div>
+            </div>
+
+            <div className="reset-modal-body">
+              <p>
+                Are you sure you want to completely <strong>truncate all match scores, balls, overs, innings, player match statistics, and tosses</strong>?
+              </p>
+              <p>
+                Every match will be reset back to <strong>SCHEDULED</strong> status (0/0 in 0.0 overs) ready for clean live scoring, and tournament standings points will be zeroed.
+              </p>
+
+              <div className="reset-modal-note">
+                <div className="safe-row">
+                  <span>✔</span>
+                  <span>100% Safe & Preserved:</span>
+                </div>
+                <span>All 8 franchises, teams, rosters, and player profiles with photos remain completely safe and untouched.</span>
+              </div>
+            </div>
+
+            <div className="reset-modal-actions">
+              <button
+                type="button"
+                className="button secondary compact"
+                onClick={() => setShowResetConfirm(false)}
+                disabled={isResetting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button danger compact"
+                onClick={handleTruncateMatches}
+                disabled={isResetting}
+              >
+                {isResetting ? (
+                  <>
+                    <RefreshCw size={13} className="spin" />
+                    <span>Truncating...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw size={13} />
+                    <span>Yes, Truncate All Match Data</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Notification Toast */}
+      {resetSuccess && (
+        <div className="reset-toast-notification">
+          <CheckCircle2 size={18} />
+          <span>{resetSuccess}</span>
+          <button type="button" onClick={() => setResetSuccess(null)} aria-label="Close notification">
+            <X size={14} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

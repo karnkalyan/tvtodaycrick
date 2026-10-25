@@ -215,6 +215,7 @@ model Match {
   winnerTeam Team?       @relation("MatchWinner", fields: [winnerTeamId], references: [id], onDelete: SetNull)
   stats      PlayerMatchStat[]
   innings    MatchInnings[]
+  scoreEvents ScoreEvent[]
 
   @@index([tournamentId])
   @@index([homeTeamId])
@@ -289,6 +290,25 @@ model PlayerMatchStat {
   @@index([matchId])
   @@index([playerId])
   @@index([teamId])
+}
+
+/// Undo journal for score entry. Every innings / player stat / toss write stores
+/// the row's previous state (`before` = null when the row did not exist yet).
+/// Writes sharing a `groupId` (e.g. one quick ball = innings + striker stat) are undone together.
+model ScoreEvent {
+  id        Int      @id @default(autoincrement())
+  matchId   Int
+  groupId   String   @db.VarChar(64)
+  label     String   @db.VarChar(160)
+  kind      String   @db.VarChar(20)
+  targetKey String   @db.VarChar(80)
+  before    Json?
+  createdAt DateTime @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId, id])
+  @@index([groupId])
 }
 
 model MediaAsset {

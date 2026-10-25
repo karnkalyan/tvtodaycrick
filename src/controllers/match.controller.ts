@@ -1,5 +1,6 @@
 import { matchService } from "@/services/match.service";
 import { inningsSchema, matchSchema, matchUpdateSchema, statSchema, tossSchema } from "@/validators/match.validator";
+import { undoMeta } from "@/services/score-undo.service";
 
 export const matchController = {
   list: () => matchService.list(),
@@ -12,7 +13,7 @@ export const matchController = {
     const match = await matchService.get(data.matchId);
     if (!match) throw new Error("Match not found");
     if (![match.homeTeamId, match.awayTeamId].includes(data.winnerTeamId)) throw new Error("Toss winner must be one of the match teams");
-    return matchService.saveToss(data);
+    return matchService.saveToss(data, undoMeta(body));
   },
   saveStat: async (body: unknown) => {
     const data = statSchema.parse(body);
@@ -21,13 +22,16 @@ export const matchController = {
     if (![match.homeTeamId, match.awayTeamId].includes(data.teamId)) throw new Error("Stat team must be part of the match");
     const player = [...match.homeTeam.players, ...match.awayTeam.players].find(p => p.id === data.playerId);
     if (!player || player.teamId !== data.teamId) throw new Error("Player must belong to the selected match team");
-    return matchService.saveStat(data);
+    return matchService.saveStat(data, undoMeta(body));
   },
   saveInnings: async (body: unknown) => {
     const data = inningsSchema.parse(body);
     const match = await matchService.get(data.matchId);
     if (!match) throw new Error("Match not found");
     if (![match.homeTeamId, match.awayTeamId].includes(data.teamId)) throw new Error("Innings team must be part of the match");
-    return matchService.saveInnings(data);
+    return matchService.saveInnings(data, undoMeta(body));
   },
+  undoHistory: (matchId: number) => matchService.undoHistory(matchId),
+  undoLast: (matchId: number) => matchService.undoLast(matchId),
+  truncateMatchData: (season?: string) => matchService.truncateMatchData(season),
 };

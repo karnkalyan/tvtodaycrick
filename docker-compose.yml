@@ -29,6 +29,9 @@ services:
       SEED_DATABASE: "true"
       # Strictly false for production: no pre-set / mock match scores; ready for real match scoring and live sync
       SEED_MATCH_SCORES: "false"
+      # One-time match data wipe (runs, innings, stats, toss, broadcast state). Keeps teams/players/franchises.
+      # Runs ONCE per token value — change the value to wipe match data again on next deploy.
+      RESET_MATCH_DATA_TOKEN: "2026-10-25-clean-start"
       UPLOAD_MAX_MB: "25"
     ports:
       - "3211:3211"

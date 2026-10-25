@@ -19,7 +19,8 @@
     "db:sync:all": "tsx prisma/seed-season3.ts --all",
     "db:seed:demo": "tsx prisma/seed.ts",
     "db:reset": "prisma migrate reset --force",
-    "db:seed:season3": "tsx prisma/seed-season3.ts"
+    "db:seed:season3": "tsx prisma/seed-season3.ts",
+    "db:reset:matches": "tsx prisma/reset-match-data.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.15.0",

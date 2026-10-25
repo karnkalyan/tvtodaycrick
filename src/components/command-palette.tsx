@@ -7,6 +7,7 @@ import {
   Flame,
   Radio,
   RefreshCw,
+  RotateCcw,
   Search,
   Shield,
   Sparkles,
@@ -45,10 +46,12 @@ export function CommandPalette({
   open,
   onClose,
   onTriggerSync,
+  onTriggerReset,
 }: {
   open: boolean;
   onClose: () => void;
   onTriggerSync?: () => void;
+  onTriggerReset?: () => void;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -135,6 +138,17 @@ export function CommandPalette({
       sublabel: "Browse franchise registrations & player profiles",
       icon: <Shield size={16} />,
       href: "/squads",
+    },
+    {
+      id: "act-reset",
+      type: "action",
+      label: "Truncate & Reset Match Details",
+      sublabel: "Truncate all match scores, balls, innings, player stats back to scheduled 0/0",
+      icon: <RotateCcw size={16} />,
+      action: () => {
+        onTriggerReset?.();
+        onClose();
+      },
     },
   ];
 

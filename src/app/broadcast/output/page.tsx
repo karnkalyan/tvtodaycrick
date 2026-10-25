@@ -741,26 +741,18 @@ export default function BroadcastOutputPage() {
             <div className="anchor-master-grid">
               {/* COLUMN 1: COMPACT ANCHOR PRESENTER + PHASES + TOSS */}
               <div className="anchor-col anchor-col-left">
-                {/* Compact 16:9 Anchor Presenter PIP window */}
+                {/* Compact 16:9 Anchor Presenter PIP window (clean without badges over frame) */}
                 <div className="anchor-master-video-zone">
                   <div className="anchor-frame-corner top-left"></div>
                   <div className="anchor-frame-corner top-right"></div>
                   <div className="anchor-frame-corner bottom-left"></div>
                   <div className="anchor-frame-corner bottom-right"></div>
-                  <span className="anchor-position-label">
-                    <span className="live-dot" style={{ width: 6, height: 6, marginRight: 4, display: 'inline-block', borderRadius: '50%', background: '#fff' }}></span>
-                    LIVE ANCHOR
-                  </span>
                   <div className="anchor-safe-copy">
                     <b>PRESENTER FEED</b>
                     <span>16:9 BROADCAST DESK</span>
                   </div>
                   <div className="anchor-audio-eq">
                     <span></span><span></span><span></span><span></span><span></span><span></span>
-                  </div>
-                  <div className="anchor-name-strap">
-                    <b id="anchorMasterAnchorName">MATCH PRESENTATION</b>
-                    <span>LIVE FROM TU CRICKET GROUND</span>
                   </div>
                 </div>
 

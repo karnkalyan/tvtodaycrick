@@ -11,6 +11,7 @@ import {
   Search,
   Sliders,
   Tv,
+  Undo2,
   Users,
   X,
   Zap,
@@ -124,6 +125,20 @@ export default function ScoreEntryPage() {
   // WebSocket sync connection
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Undo history tracking
+  const [undoHistory, setUndoHistory] = useState<{ groupId: string; label: string; createdAt: string; changes: number }[]>([]);
+  const [undoTotal, setUndoTotal] = useState(0);
+
+  const fetchUndoHistory = useCallback(async (matchId: number) => {
+    try {
+      const res = await api<{ items: any[]; total: number }>(`/api/matches/${matchId}/undo`);
+      setUndoHistory(res.items || []);
+      setUndoTotal(res.total || 0);
+    } catch {
+      // non-critical
+    }
+  }, []);
 
   useEffect(() => {
     setMounted(true);
@@ -248,12 +263,13 @@ export default function ScoreEntryPage() {
         teamId: String(battingTeam.id),
         playerId: String(battingTeam.players?.[0]?.id || ""),
       }));
+      fetchUndoHistory(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load match");
     } finally {
       setDetailLoading(false);
     }
-  }, [activeInnings]);
+  }, [activeInnings, fetchUndoHistory]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
@@ -371,8 +387,8 @@ export default function ScoreEntryPage() {
     }
   };
 
-  // Save innings
-  const saveInnings = async (n: number, f: InnForm | null) => {
+  // Save innings with optional undo journal metadata
+  const saveInnings = async (n: number, f: InnForm | null, undoGroup?: string, undoLabel?: string) => {
     if (!match || !f) return;
     setBusy(true);
     try {
@@ -388,11 +404,14 @@ export default function ScoreEntryPage() {
           extras: Number(f.extras),
           target: f.target ? Number(f.target) : null,
           status: f.status,
+          undoGroup,
+          undoLabel,
         }),
       });
       setToast(`Innings ${n} saved successfully`);
       await loadDetail(match.id);
       syncMatchToBroadcast();
+      fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Innings save failed");
     } finally {
@@ -400,8 +419,13 @@ export default function ScoreEntryPage() {
     }
   };
 
-  // Save player stat
-  const saveStatValue = async (value: StatForm, message = "Player performance saved") => {
+  // Save player stat with optional undo journal metadata
+  const saveStatValue = async (
+    value: StatForm,
+    message = "Player performance saved",
+    undoGroup?: string,
+    undoLabel?: string
+  ) => {
     if (!match) return;
     setBusy(true);
     try {
@@ -423,10 +447,13 @@ export default function ScoreEntryPage() {
         runOuts: Number(value.runOuts),
         isOut: value.isOut,
         dismissal: value.dismissal || null,
+        undoGroup,
+        undoLabel,
       };
       await api("/api/stats", { method: "POST", body: jsonBody(p) });
       setToast(message);
       await loadDetail(match.id);
+      fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Stat save failed");
     } finally {
@@ -438,6 +465,44 @@ export default function ScoreEntryPage() {
     e.preventDefault();
     await saveStatValue(stat);
   };
+
+  // Undo last recorded ball or scoring action
+  const handleUndoLast = async () => {
+    if (!match || busy) return;
+    setBusy(true);
+    try {
+      const res = await api<{ undone: string; changes: number; remaining: number }>(
+        `/api/matches/${match.id}/undo`,
+        { method: "POST" }
+      );
+      setToast(`Undone: ${res.undone || "Last event removed"}`);
+      await loadDetail(match.id);
+      syncMatchToBroadcast();
+      fetchUndoHistory(match.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to undo action");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Keyboard shortcut Ctrl+Z / Cmd+Z for instant undo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+        if (selectedId && undoTotal > 0 && !busy) {
+          e.preventDefault();
+          handleUndoLast();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedId, undoTotal, busy, match]);
 
   // Quick Ball-by-ball scoring action
   const handleQuickBall = async (type: "0" | "1" | "2" | "3" | "4" | "6" | "wicket" | "wide" | "noball") => {
@@ -513,8 +578,13 @@ export default function ScoreEntryPage() {
       data: { runs: nextRuns, wickets: nextWkts, overs: ovStr },
     });
 
-    // Save Innings to DB
-    await saveInnings(activeInnings, nextInn);
+    // Create undo group so innings + striker stat roll back together in a single undo step
+    const undoGroup = `ball-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const ballLabel = type === "wicket" ? "WICKET" : type === "wide" ? "WIDE (+1)" : type === "noball" ? "NO BALL (+1)" : `+${type} RUN${type === "1" ? "" : "S"}`;
+    const undoLabel = `Ball: ${ballLabel} (${nextRuns}/${nextWkts} in ${ovStr} ov)`;
+
+    // Save Innings to DB with undo journal
+    await saveInnings(activeInnings, nextInn, undoGroup, undoLabel);
 
     // Also update active striker player stat if striker selected
     if (strikerId && ballDelta > 0 && type !== "wicket") {
@@ -536,7 +606,7 @@ export default function ScoreEntryPage() {
         fours: String(cur4s + (isBoundaryFour ? 1 : 0)),
         sixes: String(cur6s + (isBoundarySix ? 1 : 0)),
       };
-      await saveStatValue(pStat, `Ball recorded: ${type.toUpperCase()}`);
+      await saveStatValue(pStat, `Ball recorded: ${type.toUpperCase()}`, undoGroup, undoLabel);
     }
   };
 
@@ -581,6 +651,34 @@ export default function ScoreEntryPage() {
               <span className={`live-dot ${wsConnected ? "" : "recording"}`} style={{ width: 6, height: 6 }} />
               <span>GFX ENGINE: {wsConnected ? "ONLINE (:3001)" : "OFFLINE"}</span>
             </span>
+            {match && (
+              <button
+                type="button"
+                className="button secondary"
+                onClick={handleUndoLast}
+                disabled={busy || undoTotal === 0}
+                title={undoTotal > 0 ? `Undo last event: ${undoHistory[0]?.label || ""} (Ctrl+Z)` : "No events to undo"}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  borderColor: undoTotal > 0 ? "rgba(239, 68, 68, 0.45)" : undefined,
+                  color: undoTotal > 0 ? "#ef4444" : undefined,
+                  fontWeight: 700,
+                }}
+              >
+                <Undo2 size={14} />
+                <span>Undo Last</span>
+                {undoTotal > 0 && (
+                  <span
+                    className="badge danger"
+                    style={{ fontSize: "10px", padding: "1px 6px", lineHeight: "1.2" }}
+                  >
+                    {undoTotal}
+                  </span>
+                )}
+              </button>
+            )}
             <button type="button" className="button secondary" onClick={loadMatches}>
               <RefreshCw size={14} /> Refresh
             </button>
@@ -799,13 +897,48 @@ export default function ScoreEntryPage() {
               {/* QUICK BALL-BY-BALL SCORING PANEL */}
               <div className="quick-scoring-panel">
                 <div className="quick-scoring-title">
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                     <h4>Quick Ball-by-Ball Scoring</h4>
                     <span className="badge brand" style={{ fontSize: "10px" }}>
                       Active Innings: {activeInnings}
                     </span>
+                    {undoTotal > 0 && undoHistory[0] && (
+                      <span
+                        className="badge"
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--muted)",
+                          maxWidth: 320,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                        title={undoHistory[0].label}
+                      >
+                        Last: <strong>{undoHistory[0].label}</strong>
+                      </span>
+                    )}
                   </div>
-                  <div style={{ display: "flex", gap: "6px" }}>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    {undoTotal > 0 && (
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={handleUndoLast}
+                        disabled={busy}
+                        title="Undo last recorded event (Ctrl+Z)"
+                        style={{
+                          color: "#ef4444",
+                          borderColor: "rgba(239, 68, 68, 0.45)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          fontWeight: 700,
+                        }}
+                      >
+                        <Undo2 size={12} /> Undo
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={`button compact ${activeInnings === 1 ? "" : "secondary"}`}
@@ -896,6 +1029,27 @@ export default function ScoreEntryPage() {
                   </button>
                   <button type="button" className="ball-stepper-btn" onClick={() => handleQuickBall("wide")} disabled={busy}>
                     WIDE
+                  </button>
+                  <button
+                    type="button"
+                    className="ball-stepper-btn undo"
+                    onClick={handleUndoLast}
+                    disabled={busy || undoTotal === 0}
+                    title="Undo last recorded ball or scoring action (Ctrl+Z)"
+                    style={{
+                      background: undoTotal > 0 ? "rgba(239, 68, 68, 0.16)" : "rgba(255, 255, 255, 0.04)",
+                      color: undoTotal > 0 ? "#f87171" : "var(--muted)",
+                      borderColor: undoTotal > 0 ? "rgba(239, 68, 68, 0.45)" : "rgba(255, 255, 255, 0.08)",
+                      fontWeight: 800,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <Undo2 size={14} />
+                    <span>UNDO</span>
+                    {undoTotal > 0 && <span style={{ opacity: 0.85, fontSize: "11px" }}>({undoTotal})</span>}
                   </button>
                 </div>
               </div>

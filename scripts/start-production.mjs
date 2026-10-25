@@ -27,6 +27,20 @@ async function boot() {
     console.log("\n[1/4] Synchronizing MySQL database schema...");
     await runCommand("npx", ["prisma", "db", "push", "--skip-generate"]);
 
+    // 2a. One-time match data reset (clears runs/innings/stats/toss, keeps teams/players/franchises).
+    //     Runs only once per RESET_MATCH_DATA_TOKEN value; change the token to reset again.
+    const resetToken = (process.env.RESET_MATCH_DATA_TOKEN || "").trim();
+    if (resetToken) {
+      console.log(`\n[2/4] Checking one-time match data reset (token: ${resetToken})...`);
+      try {
+        const resetArgs = ["run", "db:reset:matches", "--", `--once=${resetToken}`];
+        if (process.env.SEED_DATABASE === "true") resetArgs.push("--skip-seed");
+        await runCommand("npm", resetArgs);
+      } catch (err) {
+        console.warn("Notice: Match data reset failed:", err.message);
+      }
+    }
+
     // 2. Run initial seed if configured
     if (process.env.SEED_DATABASE === "true") {
       console.log("\n[2/4] Running production database seed (SEED_MATCH_SCORES=false)...");
