@@ -12,6 +12,9 @@
   --muted: #64748b;
   --line: #e2e8f0;
   --line-strong: #cbd5e1;
+  --scrollbar-track: #f1f5f9;
+  --scrollbar-thumb: #94a3b8;
+  --scrollbar-thumb-hover: #dc2626;
 
   /* Primary Brand System - Nepal Premier League */
   --brand: #dc2626;
@@ -53,6 +56,9 @@ html[data-theme="dark"] {
   --muted: #94a3b8;
   --line: #1e293b;
   --line-strong: #334155;
+  --scrollbar-track: #0f172a;
+  --scrollbar-thumb: #475569;
+  --scrollbar-thumb-hover: #ef4444;
 
   --brand: #ef4444;
   --brand-2: #dc2626;
@@ -81,6 +87,41 @@ html[data-theme="dark"] {
 html {
   background: var(--bg);
   scroll-behavior: smooth;
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Theme-aware scrollbars for the page and every scrollable panel. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
+  border-radius: var(--radius-full);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
 }
 
 body {
@@ -2738,4 +2779,3 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 12px;
 }
-
