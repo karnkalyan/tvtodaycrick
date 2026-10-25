@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { mergeBroadcastState } from "@/lib/broadcast-state";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
@@ -11,7 +14,10 @@ export async function GET() {
       return NextResponse.json({ state: null });
     }
 
-    return NextResponse.json({ state: record.state, updatedAt: record.updatedAt });
+    return NextResponse.json(
+      { state: record.state, updatedAt: record.updatedAt },
+      { headers: { "Cache-Control": "no-store, max-age=0" } },
+    );
   } catch (error) {
     console.error("GET /api/broadcast/state error:", error);
     return NextResponse.json({ error: "Failed to fetch broadcast state" }, { status: 500 });
@@ -27,16 +33,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "State payload required" }, { status: 400 });
     }
 
-    // Upsert current state in MySQL
-    const saved = await (prisma as any).broadcastState.upsert({
-      where: { id: "current" },
-      create: {
-        id: "current",
-        state,
-      },
-      update: {
-        state,
-      },
+    // Score entry and the broadcast director own different parts of the same
+    // document. Merge partial writes so one client cannot erase another
+    // client's recent deliveries, players, standings, or UI settings.
+    const saved = await prisma.$transaction(async (tx) => {
+      const existing = await (tx as any).broadcastState.findUnique({
+        where: { id: "current" },
+      });
+      const mergedState = mergeBroadcastState(existing?.state, state);
+      return (tx as any).broadcastState.upsert({
+        where: { id: "current" },
+        create: { id: "current", state: mergedState },
+        update: { state: mergedState },
+      });
     });
 
     // Log the event to BroadcastEvent table

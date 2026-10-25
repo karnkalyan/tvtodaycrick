@@ -899,7 +899,24 @@
     }
   }
 
+  let stingerActive=false;
+
+  function hideNonStingerLayers(){
+    $$('.gfx').forEach(el=>{
+      if(el.id!=='stinger')hardHide(el);
+    });
+    const banner=$('#masterEventLowerThird');
+    if(banner){banner.classList.remove('is-active');banner.classList.add('is-hidden');}
+    $('#masterCard')?.classList.remove('has-event-lower-third');
+    $('#anchorMaster')?.classList.remove('has-event-lower-third');
+  }
+
   function applyVisibility(animate=false){
+    if(stingerActive){
+      hideNonStingerLayers();
+      reveal($('#stinger'));
+      return;
+    }
     const scorebar=$('#scorebar'),compact=$('#compactBug');
     const targetGraphic = state.ui.graphic || null;
     // Full-screen masters own the full canvas, so lower score layers stay hidden.
@@ -936,7 +953,8 @@
     flashStatus.t=setTimeout(()=>{el.textContent='MANUAL CUE';el.classList.remove('hot')},900);
   }
 
-  async function saveState(reason='update'){
+  async function saveState(reason='update', persist=true){
+    if(!persist)return;
     const snapshot=deepClone(state);
     snapshot.meta={version:6,updatedAt:Date.now(),reason};
     try{localStorage.setItem(STORAGE_KEY,JSON.stringify(snapshot));flashStatus('SAVED · SYNCED');}catch{}
@@ -966,15 +984,15 @@
     flashStatus('CUE SENT');
   }
 
-  function show(id,publish=true){
+  function show(id,publish=true, persist=publish){
     if(id==='scorebar'||id==='compactBug'){
       state.ui.scoreMode=id;
       applyVisibility(true);
-      saveState('score mode ' + id);
+      saveState('score mode ' + id, persist);
     }else{
       state.ui.graphic=id;
       applyVisibility(true);
-      saveState('show ' + id);
+      saveState('show ' + id, persist);
     }
     if(publish)sendCue('show',{id});
   }
@@ -992,34 +1010,38 @@
   }
 
   let stingerTimeline=null,stingerFallbackTimer=null;
-  function stopStinger(){
+  function stopStinger(restore=true){
     clearTimeout(stingerFallbackTimer);stingerFallbackTimer=null;
     if(stingerTimeline){try{stingerTimeline.kill()}catch{}stingerTimeline=null;}
     const el=$('#stinger');if(el){stopElementMotion(el);hardHide(el);}
+    const wasActive=stingerActive;
+    stingerActive=false;
+    if(restore&&wasActive)applyVisibility(false);
   }
 
   function clearTransientLocal(){
     stopStinger();
     clearTimeout(ltEventTimer);
+    dismissEventLowerThird();
     state.ui.graphic=null;
     applyVisibility(true);
   }
 
-  function clearGraphics(publish=true){
+  function clearGraphics(publish=true, persist=publish){
     stopDemo(false,false);
     clearTransientLocal();
     const lt=$('#lowerThird');if(lt)animateOut(lt);
     state.ui.graphic=null;
-    saveState('clear');
+    saveState('clear', persist);
     if(publish)sendCue('clear');
   }
 
-  function stopAll(publish=true){
+  function stopAll(publish=true, persist=publish){
     stopDemo(false,false);
     clearTransientLocal();
     const lt=$('#lowerThird');if(lt)animateOut(lt);
     state.ui.graphic=null;
-    saveState('stopAll');
+    saveState('stopAll', persist);
     if(publish)sendCue('stopAll');
   }
 
@@ -1034,22 +1056,22 @@
           if(id === 'scorebar' || id === 'compactBug'){
             state.ui.scoreMode = id;
             applyVisibility(true);
-            saveState('score mode ' + id);
+            saveState('score mode ' + id, false);
           } else {
-            show(id, false);
+            show(id, false, false);
           }
         }
         break;
       }
       case 'clear': {
-        clearGraphics(false);
+        clearGraphics(false, false);
         break;
       }
       case 'stopAll': {
         if(msg.clearScores || msg.stopScores){
           state.ui.scoreMode = 'hidden';
         }
-        stopAll(false);
+        stopAll(false, false);
         break;
       }
       case 'stopLayer': {
@@ -1063,7 +1085,7 @@
             const el = $('#' + id);
             if(el) animateOut(el);
           }
-          saveState('stopLayer ' + id);
+          saveState('stopLayer ' + id, false);
         }
         break;
       }
@@ -1078,7 +1100,6 @@
         const evt = msg.event || msg.data?.event;
         if(evt) {
           playStinger(evt, false);
-          triggerMasterEventLowerThird(evt);
         }
         break;
       }
@@ -1086,7 +1107,6 @@
       case 'eventBanner': {
         const evt = msg.event || msg.data?.event || 'four';
         const isPersist = Boolean(msg.persist || msg.data?.persist);
-        playStinger(evt, false);
         triggerMasterEventLowerThird(evt, isPersist);
         break;
       }
@@ -1095,20 +1115,20 @@
         if(mode){
           state.ui.scoreMode = mode;
           applyVisibility(true);
-          saveState('scoreMode ' + mode);
+          saveState('scoreMode ' + mode, false);
         }
         break;
       }
       case 'hideScores': {
         state.ui.scoreMode = 'hidden';
         applyVisibility(true);
-        saveState('hideScores');
+        saveState('hideScores', false);
         break;
       }
       case 'action': {
         const name = msg.name || msg.data?.name;
         if(name) {
-          action(name);
+          action(name, false);
         }
         break;
       }
@@ -1118,7 +1138,6 @@
         if(typeof d.wickets === 'number') state.score.wickets = d.wickets;
         if(d.overs !== undefined) state.score.overs = d.overs;
         renderLive(prev, true);
-        saveState('score update remote');
         break;
       }
       case 'updateData':
@@ -1149,7 +1168,6 @@
         // In-place update without re-animating or flickering the master card
         renderLists();
         renderLive(prev, false);
-        saveState('data update remote');
         break;
       }
       case 'replay': {
@@ -1188,10 +1206,19 @@
   });
 
   let masterEventTimeout = null;
+  function dismissEventLowerThird(){
+    if(masterEventTimeout){clearTimeout(masterEventTimeout);masterEventTimeout=null;}
+    const banner=$('#masterEventLowerThird');
+    if(banner){banner.classList.remove('is-active');banner.classList.add('is-hidden');}
+    $('#masterCard')?.classList.remove('has-event-lower-third');
+    $('#anchorMaster')?.classList.remove('has-event-lower-third');
+  }
+
   function triggerMasterEventLowerThird(eventType = 'four', persist = false) {
-    if (!stingerTimeline) {
-      try { playStinger(eventType, false, persist); } catch(e){}
-    }
+    stopStinger();
+    clearTimeout(ltEventTimer);
+    const standaloneLowerThird=$('#lowerThird');
+    if(standaloneLowerThird)hardHide(standaloneLowerThird);
     const banner = $('#masterEventLowerThird');
     if (!banner) return;
     const masterCard = $('#masterCard');
@@ -1463,7 +1490,7 @@
     }
   }
 
-  function add(v, r=0, legal=true, wicket=false){
+  function add(v, r=0, legal=true, wicket=false, persist=true){
     const previous = deepClone(state);
     state.score.runs += r;
     if (wicket) state.score.wickets = Math.min(10, state.score.wickets + 1);
@@ -1494,7 +1521,7 @@
     }
 
     renderLive(previous, true);
-    saveState('score update');
+    saveState('score update', persist);
   }
 
   const stingers = {
@@ -1519,6 +1546,10 @@
 
   function playStinger(type, publish=true, persist=false){
     stopStinger();
+    clearTimeout(ltEventTimer);
+    dismissEventLowerThird();
+    stingerActive=true;
+    hideNonStingerLayers();
     const norm = String(type || 'four').toLowerCase().replace(/[-_]/g, '').trim();
     const cfg = stingers[norm] || stingers[type] || stingers.four;
     const el = $('#stinger');
@@ -1551,13 +1582,15 @@
           if (!persist) {
             stingerTimeline = null;
             hardHide(el);
+            stingerActive=false;
+            applyVisibility(false);
           }
         }
       });
 
       // 1. Initial State
       stingerTimeline
-        .set(el, { autoAlpha: 1, display: 'flex', zIndex: 9999, clearProps: 'clipPath' })
+        .set(el, { autoAlpha: 1, display: 'flex', zIndex: 20000, clearProps: 'clipPath' })
         .set('.stinger-copy', { scale: 1, opacity: 1, display: 'flex' })
         .set('#stingerWord', { opacity: 1, scale: 1, display: 'inline-flex' })
         
@@ -1634,6 +1667,8 @@
         stingerFallbackTimer = setTimeout(() => {
           stingerFallbackTimer = null;
           hardHide(el);
+          stingerActive=false;
+          applyVisibility(false);
         }, 2900);
       }
     }
@@ -1678,62 +1713,52 @@
     if(publish)sendCue('stopAll');
   }
 
-  function action(name){
+  function action(name, persist=true){
     switch(name){
-      case'run1':add('1',1);break;case'run2':add('2',2);break;case'run3':add('3',3);break;
+      case'run1':add('1',1,true,false,persist);break;case'run2':add('2',2,true,false,persist);break;case'run3':add('3',3,true,false,persist);break;
       case'undoDelivery':{
         const previous=deepClone(state);
         state.score.recent=(state.score.recent||[]).slice(0,-1);
         renderLive(previous,true);
-        saveState('undo delivery');
+        saveState('undo delivery', persist);
         break;
       }
       case'four':
-        add('4',4);
-        playStinger('four');
-        triggerMasterEventLowerThird('four');
+        add('4',4,true,false,persist);
+        playStinger('four', persist);
         break;
       case'six':
-        add('6',6);
-        playStinger('six');
-        triggerMasterEventLowerThird('six');
+        add('6',6,true,false,persist);
+        playStinger('six', persist);
         break;
-      case'dot':add('0',0);break;
+      case'dot':add('0',0,true,false,persist);break;
       case'wide':
-        add('WD',1,false);
-        playStinger('wide');
-        triggerMasterEventLowerThird('wide');
+        add('WD',1,false,false,persist);
+        playStinger('wide', persist);
         break;
       case'noBall':
-        add('NB',1,false);
-        playStinger('noball');
-        triggerMasterEventLowerThird('noball');
+        add('NB',1,false,false,persist);
+        playStinger('noball', persist);
         break;
       case'wicket':
-        add('W',0,true,true);
-        playStinger('wicket');
-        triggerMasterEventLowerThird('wicket');
+        add('W',0,true,true,persist);
+        playStinger('wicket', persist);
         break;
       case'freehit':
-        playStinger('freehit');
-        triggerMasterEventLowerThird('freehit');
+        playStinger('freehit', persist);
         break;
       case'drs':
       case'review':
-        playStinger('review');
-        triggerMasterEventLowerThird('drs');
+        playStinger('review', persist);
         break;
       case'timeout':
-        playStinger('timeout');
-        triggerMasterEventLowerThird('timeout');
+        playStinger('timeout', persist);
         break;
       case'fifty':
-        playStinger('fifty');
-        triggerMasterEventLowerThird('fifty');
+        playStinger('fifty', persist);
         break;
       case'century':
-        playStinger('century');
-        triggerMasterEventLowerThird('century');
+        playStinger('century', persist);
         break;
       case'hideScores':state.ui.scoreMode='hidden';applyVisibility(true);saveState('hide scores');sendCue('hideScores');break;case'clearGraphic':stopAll(true);break;
       case'reset':{stopAll(true);state=deepClone(defaults);state.ui.graphic=null;render(null,false);saveState('reset');break;}

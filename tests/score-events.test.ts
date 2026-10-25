@@ -32,7 +32,7 @@ test("all quick-score outcomes apply the expected totals", () => {
 test("broadcast receiver does not turn ordinary runs into the FOUR fallback banner", () => {
   const script = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
   const actionReceiver = script.slice(script.indexOf("case 'action':"), script.indexOf("case 'scoreUpdate':"));
-  assert.match(actionReceiver, /action\(name\)/);
+  assert.match(actionReceiver, /action\(name, false\)/);
   assert.doesNotMatch(actionReceiver, /triggerMasterEventLowerThird\(name\)/);
-  assert.match(script, /case'run3':add\('3',3\)/);
+  assert.match(script, /case'run3':add\('3',3,true,false,persist\)/);
 });

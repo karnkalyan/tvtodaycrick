@@ -368,11 +368,6 @@ export default function ScoreEntryPage() {
     dispatchBroadcastCue({ action: "updateData", payload });
     dispatchBroadcastCue({ action: "scoreUpdate", data: payload.score });
 
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      setToast("Synced to live broadcast graphics");
-      return;
-    }
-
     try {
       await api("/api/broadcast/state", {
         method: "POST",
@@ -383,7 +378,9 @@ export default function ScoreEntryPage() {
       });
       setToast("Synced to live broadcast graphics");
     } catch {
-      setToast("Broadcast synced over WebSocket");
+      setToast(wsRef.current?.readyState === WebSocket.OPEN
+        ? "Broadcast synced over WebSocket"
+        : "Unable to persist broadcast state");
     }
   };
 

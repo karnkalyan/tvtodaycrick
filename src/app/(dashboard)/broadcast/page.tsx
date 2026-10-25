@@ -464,9 +464,6 @@ export default function BroadcastControllerPage() {
   // Adjust score action: triggers action animation in engine and updates state
   const handleScoreAction = (actionName: string, runsDelta = 0, isLegal = true, isWkt = false) => {
     sendCue("action", { name: actionName });
-    if (["four", "six", "wicket", "wide", "noBall"].includes(actionName)) {
-      sendCue("eventLowerThird", { event: actionName.toLowerCase() });
-    }
 
     const nextRuns = runs + runsDelta;
     const nextWickets = isWkt ? Math.min(10, wickets + 1) : wickets;

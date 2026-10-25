@@ -3284,15 +3284,14 @@ body{font-family:Inter,Arial,"Helvetica Neue",sans-serif;text-rendering:geometri
 .stinger {
   position: absolute !important;
   inset: 0 !important;
-  z-index: 9999 !important;
+  z-index: 20000 !important;
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
   overflow: hidden !important;
   pointer-events: none !important;
-  background: radial-gradient(circle at 50% 50%, rgba(10, 18, 38, 0.55) 0%, rgba(2, 6, 18, 0.78) 100%) !important;
-  backdrop-filter: blur(6px) !important;
+  background: radial-gradient(circle at 50% 50%, rgb(10, 18, 38) 0%, rgb(2, 6, 18) 100%) !important;
 }
 .stinger-bg {
   position: absolute;

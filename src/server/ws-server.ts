@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 const PORT = Number(process.env.WS_PORT || 3001);
 
 let latestState: any = null;
+let persistQueue: Promise<void> = Promise.resolve();
 
 const deliveryTokens: Record<string, { token: string; legal: boolean }> = {
   dot: { token: "0", legal: true },
@@ -47,25 +48,31 @@ async function initDbState() {
   }
 }
 
-async function persistState(action: string, layer?: string, payload?: any) {
+function persistState(action: string, layer?: string, payload?: any) {
   if (!latestState) return;
-  try {
-    await (prisma as any).broadcastState.upsert({
-      where: { id: "current" },
-      create: { id: "current", state: latestState },
-      update: { state: latestState },
-    });
+  const stateSnapshot = structuredClone(latestState);
+  const payloadSnapshot = payload == null ? null : structuredClone(payload);
+  // WebSocket messages are ordered. Keep database writes in that same order so
+  // a slower delivery/action write cannot overwrite the scoreUpdate after it.
+  persistQueue = persistQueue.then(async () => {
+    try {
+      await (prisma as any).broadcastState.upsert({
+        where: { id: "current" },
+        create: { id: "current", state: stateSnapshot },
+        update: { state: stateSnapshot },
+      });
 
-    await (prisma as any).broadcastEvent.create({
-      data: {
-        action,
-        layer: layer || null,
-        payload: payload || null,
-      },
-    });
-  } catch (err) {
-    console.error("[NPL WebSocket] Error persisting state to DB:", err);
-  }
+      await (prisma as any).broadcastEvent.create({
+        data: {
+          action,
+          layer: layer || null,
+          payload: payloadSnapshot,
+        },
+      });
+    } catch (err) {
+      console.error("[NPL WebSocket] Error persisting state to DB:", err);
+    }
+  });
 }
 
 export function startWebSocketServer(port = PORT): WebSocketServer {
