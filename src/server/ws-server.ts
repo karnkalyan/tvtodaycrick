@@ -6,6 +6,33 @@ const PORT = Number(process.env.WS_PORT || 3001);
 
 let latestState: any = null;
 
+const deliveryTokens: Record<string, { token: string; legal: boolean }> = {
+  dot: { token: "0", legal: true },
+  run1: { token: "1", legal: true },
+  run2: { token: "2", legal: true },
+  run3: { token: "3", legal: true },
+  four: { token: "4", legal: true },
+  six: { token: "6", legal: true },
+  wicket: { token: "W", legal: true },
+  wide: { token: "WD", legal: false },
+  noBall: { token: "NB", legal: false },
+};
+
+function updateRecentDeliveries(actionName: string) {
+  if (!latestState.score) latestState.score = {};
+  const current = Array.isArray(latestState.score.recent) ? latestState.score.recent : [];
+  if (actionName === "undoDelivery") {
+    latestState.score.recent = current.slice(0, -1);
+    return;
+  }
+  const delivery = deliveryTokens[actionName];
+  if (!delivery) return;
+  const ballsInOver = Number(String(latestState.score.overs || "0.0").split(".")[1]) || 0;
+  latestState.score.recent = delivery.legal && ballsInOver === 5
+    ? []
+    : [...current, delivery.token].slice(-6);
+}
+
 async function initDbState() {
   try {
     const record = await (prisma as any).broadcastState.findUnique({
@@ -119,6 +146,7 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
           latestState.score = { ...(latestState?.score || {}), ...(msg.data || msg.payload) };
           persistState("scoreUpdate", undefined, msg);
         } else if (actionType === "action") {
+          updateRecentDeliveries(msg.name || msg.data?.name || "");
           persistState("action", msg.name, msg);
         } else if (actionType === "stinger") {
           persistState("stinger", msg.event, msg);

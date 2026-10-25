@@ -1109,7 +1109,6 @@
         const name = msg.name || msg.data?.name;
         if(name) {
           action(name);
-          triggerMasterEventLowerThird(name);
         }
         break;
       }
@@ -1681,7 +1680,14 @@
 
   function action(name){
     switch(name){
-      case'run1':add('1',1);break;case'run2':add('2',2);break;
+      case'run1':add('1',1);break;case'run2':add('2',2);break;case'run3':add('3',3);break;
+      case'undoDelivery':{
+        const previous=deepClone(state);
+        state.score.recent=(state.score.recent||[]).slice(0,-1);
+        renderLive(previous,true);
+        saveState('undo delivery');
+        break;
+      }
       case'four':
         add('4',4);
         playStinger('four');

@@ -17,7 +17,25 @@ export const matchService = {
       toss: { include: { winnerTeam: true } }, innings: { include: { team: true }, orderBy: { inningsNumber: "asc" } },
       stats: { include: { player: true, team: true }, orderBy: [{ innings: "asc" }, { runs: "desc" }] },
     },
-  }); if(!match)return null; const source=await getNpl(match.tournament?.season || "2026"); for(const team of [match.homeTeam,match.awayTeam]){const roster=source.teams.find(t=>t.id===team.id)?.players||[]; const people=await prisma.player.findMany({where:{id:{in:roster.flatMap(p=>p.id?[p.id]:[])}}}); team.players=people.map(p=>{const r=roster.find(r=>r.id===p.id);return {...p,teamId:team.id,role:(r?.role||p.role) as typeof p.role,isCaptain:r?.isCaptain||false,imageUrl:r?.imageUrl||null,isActive:true};});} const fixture=source.fixtures.find(f=>f.number===match.matchNumber);return {...match,sourceScores:{home:fixture?.homeScore,away:fixture?.awayScore}}; },
+  });
+    if(!match)return null;
+    const source=await getNpl(match.tournament?.season || "2026");
+    for(const team of [match.homeTeam,match.awayTeam]){
+      const sourceTeam=source.teams.find(t=>t.id===team.id||t.name===team.name);
+      const roster=sourceTeam?.players||[];
+      team.players=team.players.map(player=>{
+        const registration=roster.find(r=>r.id===player.id||r.name.trim().toLocaleLowerCase()===player.displayName.trim().toLocaleLowerCase());
+        return registration?{
+          ...player,
+          role:(registration.role||player.role) as typeof player.role,
+          isCaptain:registration.isCaptain??player.isCaptain,
+          imageUrl:registration.imageUrl||player.imageUrl,
+        }:player;
+      });
+    }
+    const fixture=source.fixtures.find(f=>f.number===match.matchNumber);
+    return {...match,sourceScores:{home:fixture?.homeScore,away:fixture?.awayScore}};
+  },
   create: (data: Prisma.MatchUncheckedCreateInput) => prisma.match.create({ data }),
   update: (id: number, data: Prisma.MatchUncheckedUpdateInput) => prisma.match.update({ where: { id }, data }),
   remove: (id: number) => prisma.match.delete({ where: { id } }),

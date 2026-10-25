@@ -2625,8 +2625,8 @@ body{font-family:Inter,Arial,"Helvetica Neue",sans-serif;text-rendering:geometri
 .anchor-master-header {
   position: relative;
   z-index: 2;
-  height: 134px;
-  flex: 0 0 134px;
+  height: 154px;
+  flex: 0 0 154px;
   padding: 8px 28px;
   display: grid;
   grid-template-columns: 1fr 480px 1fr;
@@ -2641,7 +2641,7 @@ body{font-family:Inter,Arial,"Helvetica Neue",sans-serif;text-rendering:geometri
 .anchor-master-team h2 { color:#fff; font-size:23px; line-height:1; margin:4px 0 0; white-space:nowrap; }
 .anchor-master-score { text-align:center; color:#fff; display:flex; flex-direction:column; align-items:center; }
 .anchor-master-score > span { color:#cbd5e1; font-size:11px; font-weight:850; letter-spacing:2px; text-transform:uppercase; margin-bottom:2px; }
-.anchor-master-score strong { font-size:94px; line-height:.9; letter-spacing:-2.5px; text-shadow:0 0 45px rgba(255,255,255,.55), 0 4px 18px rgba(0,0,0,.85); }
+.anchor-master-score strong { font-size:86px; line-height:.88; letter-spacing:-2.5px; text-shadow:0 0 45px rgba(255,255,255,.55), 0 4px 18px rgba(0,0,0,.85); }
 .anchor-master-score strong i { color:#64748b; font-style:normal; font-size:66px; margin:0 8px; }
 .anchor-master-score em { color:#0f172a; background:#fff; font-size:17px; font-style:normal; font-weight:950; letter-spacing:1.4px; border-radius:999px; padding:4px 18px; margin-top:4px; box-shadow:0 4px 14px rgba(0,0,0,.4); }
 
@@ -3665,4 +3665,3 @@ body{font-family:Inter,Arial,"Helvetica Neue",sans-serif;text-rendering:geometri
   font-size: 15px;
 }
 .cricket-side-row b { font-size: 18px; font-weight: 850; }
-

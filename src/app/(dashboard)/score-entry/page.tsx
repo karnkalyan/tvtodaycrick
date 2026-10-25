@@ -27,6 +27,7 @@ import {
   humanRole,
 } from "@/components/common";
 import { api, jsonBody } from "@/lib/client-api";
+import { applyQuickBall, QUICK_BALL_EVENTS, type QuickBallType } from "@/lib/score-events";
 import type { Match, Player, PlayerStat } from "@/types/models";
 
 type InnForm = {
@@ -235,27 +236,26 @@ export default function ScoreEntryPage() {
       setInn1(i1);
       setInn2(i2);
 
-      // Determine active innings: if Innings 2 is LIVE, set activeInnings = 2
-      if (i2.status === "LIVE") {
-        setActiveInnings(2);
-      } else {
-        setActiveInnings(1);
-      }
+      // Pick the live innings when a match is first loaded. Subsequent manual
+      // innings switches are not tied to this fetch callback.
+      const nextActiveInnings: 1 | 2 = i2.status === "LIVE" ? 2 : 1;
+      setActiveInnings(nextActiveInnings);
 
       // Default active team and players
       const homeTeam = m.homeTeam;
       const awayTeam = m.awayTeam;
-      const battingTeam = activeInnings === 1 ? homeTeam : awayTeam;
-      const bowlingTeam = activeInnings === 1 ? awayTeam : homeTeam;
+      const activeForm = nextActiveInnings === 1 ? i1 : i2;
+      const battingTeam = activeForm.teamId === String(homeTeam.id) ? homeTeam : awayTeam;
+      const bowlingTeam = activeForm.teamId === String(homeTeam.id) ? awayTeam : homeTeam;
 
       if (battingTeam.players && battingTeam.players.length > 0) {
-        setStrikerId(String(battingTeam.players[0].id));
-        if (battingTeam.players.length > 1) {
-          setNonStrikerId(String(battingTeam.players[1].id));
-        }
+        const battingIds = new Set(battingTeam.players.map((player) => String(player.id)));
+        setStrikerId((current) => battingIds.has(current) ? current : String(battingTeam.players?.[0]?.id || ""));
+        setNonStrikerId((current) => battingIds.has(current) ? current : String(battingTeam.players?.[1]?.id || ""));
       }
       if (bowlingTeam.players && bowlingTeam.players.length > 0) {
-        setBowlerId(String(bowlingTeam.players[0].id));
+        const bowlingIds = new Set(bowlingTeam.players.map((player) => String(player.id)));
+        setBowlerId((current) => bowlingIds.has(current) ? current : String(bowlingTeam.players?.[0]?.id || ""));
       }
 
       setStat((s) => ({
@@ -264,12 +264,13 @@ export default function ScoreEntryPage() {
         playerId: String(battingTeam.players?.[0]?.id || ""),
       }));
       fetchUndoHistory(id);
+      return m;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load match");
     } finally {
       setDetailLoading(false);
     }
-  }, [activeInnings, fetchUndoHistory]);
+  }, [fetchUndoHistory]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
@@ -292,6 +293,19 @@ export default function ScoreEntryPage() {
     setStat((s) => ({ ...s, teamId: id, playerId: String(list[0]?.id || "") }));
   };
 
+  // Keep all three live-scoring selectors aligned with the innings button.
+  useEffect(() => {
+    if (!match || !inn1 || !inn2) return;
+    const form = activeInnings === 1 ? inn1 : inn2;
+    const battingTeam = form.teamId === String(match.homeTeamId) ? match.homeTeam : match.awayTeam;
+    const bowlingTeam = form.teamId === String(match.homeTeamId) ? match.awayTeam : match.homeTeam;
+    const battingIds = new Set((battingTeam.players || []).map((player) => String(player.id)));
+    const bowlingIds = new Set((bowlingTeam.players || []).map((player) => String(player.id)));
+    setStrikerId((current) => battingIds.has(current) ? current : String(battingTeam.players?.[0]?.id || ""));
+    setNonStrikerId((current) => battingIds.has(current) ? current : String(battingTeam.players?.[1]?.id || ""));
+    setBowlerId((current) => bowlingIds.has(current) ? current : String(bowlingTeam.players?.[0]?.id || ""));
+  }, [activeInnings, inn1, inn2, match]);
+
   // Helper to dispatch cues to WebSocket broadcast engine
   const dispatchBroadcastCue = (msg: any) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -302,22 +316,27 @@ export default function ScoreEntryPage() {
   };
 
   // Sync current match score to broadcast graphics engine
-  const syncMatchToBroadcast = async () => {
-    if (!match || !inn1 || !inn2) return;
-    const current = activeInnings === 1 ? inn1 : inn2;
-    const battingTeam = current.teamId === String(match.homeTeamId) ? match.homeTeam : match.awayTeam;
-    const bowlingTeam = current.teamId === String(match.homeTeamId) ? match.awayTeam : match.homeTeam;
+  const syncMatchToBroadcast = async (freshMatch?: Match) => {
+    const sourceMatch = freshMatch || match;
+    if (!sourceMatch) return;
+    const sourceInn1 = freshMatch ? toInn(freshMatch, 1) : inn1;
+    const sourceInn2 = freshMatch ? toInn(freshMatch, 2) : inn2;
+    if (!sourceInn1 || !sourceInn2) return;
+    const current = activeInnings === 1 ? sourceInn1 : sourceInn2;
+    const battingTeam = current.teamId === String(sourceMatch.homeTeamId) ? sourceMatch.homeTeam : sourceMatch.awayTeam;
+    const bowlingTeam = current.teamId === String(sourceMatch.homeTeamId) ? sourceMatch.awayTeam : sourceMatch.homeTeam;
 
     const bOvers = Number(current.balls) || 0;
     const ovStr = `${Math.floor(bOvers / 6)}.${bOvers % 6}`;
+    const inningsStarted = current.status === "LIVE" || bOvers > 0 || Number(current.runs) > 0 || Number(current.wickets) > 0;
 
     const striker = battingTeam.players?.find((p) => String(p.id) === strikerId);
     const nonStriker = battingTeam.players?.find((p) => String(p.id) === nonStrikerId);
     const bowler = bowlingTeam.players?.find((p) => String(p.id) === bowlerId);
 
-    const strikerStat = match.stats?.find((s) => String(s.playerId) === strikerId);
-    const nonStrikerStat = match.stats?.find((s) => String(s.playerId) === nonStrikerId);
-    const bowlerStat = match.stats?.find((s) => String(s.playerId) === bowlerId);
+    const strikerStat = sourceMatch.stats?.find((s) => String(s.playerId) === strikerId);
+    const nonStrikerStat = sourceMatch.stats?.find((s) => String(s.playerId) === nonStrikerId);
+    const bowlerStat = sourceMatch.stats?.find((s) => String(s.playerId) === bowlerId);
 
     const payload = {
       match: {
@@ -339,15 +358,20 @@ export default function ScoreEntryPage() {
         bowlerName: bowler?.displayName?.toUpperCase() || "BOWLER",
         bowlerFigures: `${bowlerStat?.wickets ?? 0}/${bowlerStat?.runsConceded ?? 0}`,
         bowlerOvers: `${Math.floor((bowlerStat?.ballsBowled ?? 0) / 6)}.${(bowlerStat?.ballsBowled ?? 0) % 6}`,
-        matchLabel: `${match.title} · MATCH ${match.matchNumber || "01"}`,
-        venue: match.venue || "TU INTERNATIONAL CRICKET GROUND",
+        matchLabel: `${sourceMatch.title} · MATCH ${sourceMatch.matchNumber || "01"}`,
+        venue: sourceMatch.venue || "TU INTERNATIONAL CRICKET GROUND",
         requirement: current.target ? `NEED ${Number(current.target) - Number(current.runs)} RUNS TO WIN` : "",
-        innings: activeInnings === 1 ? "1ST INNINGS" : "CHASE · 2ND INNINGS",
+        innings: inningsStarted ? (activeInnings === 1 ? "1ST INNINGS" : "CHASE · 2ND INNINGS") : "MATCH SCHEDULED",
       },
     };
 
     dispatchBroadcastCue({ action: "updateData", payload });
     dispatchBroadcastCue({ action: "scoreUpdate", data: payload.score });
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      setToast("Synced to live broadcast graphics");
+      return;
+    }
 
     try {
       await api("/api/broadcast/state", {
@@ -409,9 +433,9 @@ export default function ScoreEntryPage() {
         }),
       });
       setToast(`Innings ${n} saved successfully`);
-      await loadDetail(match.id);
-      syncMatchToBroadcast();
-      fetchUndoHistory(match.id);
+      const refreshed = await loadDetail(match.id);
+      await syncMatchToBroadcast(refreshed);
+      await fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Innings save failed");
     } finally {
@@ -476,9 +500,10 @@ export default function ScoreEntryPage() {
         { method: "POST" }
       );
       setToast(`Undone: ${res.undone || "Last event removed"}`);
-      await loadDetail(match.id);
-      syncMatchToBroadcast();
-      fetchUndoHistory(match.id);
+      dispatchBroadcastCue({ action: "action", name: "undoDelivery" });
+      const refreshed = await loadDetail(match.id);
+      await syncMatchToBroadcast(refreshed);
+      await fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to undo action");
     } finally {
@@ -505,108 +530,145 @@ export default function ScoreEntryPage() {
   }, [selectedId, undoTotal, busy, match]);
 
   // Quick Ball-by-ball scoring action
-  const handleQuickBall = async (type: "0" | "1" | "2" | "3" | "4" | "6" | "wicket" | "wide" | "noball") => {
-    if (!match) return;
+  const handleQuickBall = async (type: QuickBallType) => {
+    if (!match || busy) return;
     const current = activeInnings === 1 ? inn1 : inn2;
     if (!current) return;
+    setBusy(true);
+    setError("");
 
-    let runDelta = 0;
-    let extraDelta = 0;
-    let ballDelta = 1;
-    let wktDelta = 0;
-    let isBoundaryFour = false;
-    let isBoundarySix = false;
-
-    if (type === "0") {
-      runDelta = 0;
-    } else if (type === "1") {
-      runDelta = 1;
-    } else if (type === "2") {
-      runDelta = 2;
-    } else if (type === "3") {
-      runDelta = 3;
-    } else if (type === "4") {
-      runDelta = 4;
-      isBoundaryFour = true;
-    } else if (type === "6") {
-      runDelta = 6;
-      isBoundarySix = true;
-    } else if (type === "wicket") {
-      wktDelta = 1;
-    } else if (type === "wide") {
-      runDelta = 1;
-      extraDelta = 1;
-      ballDelta = 0;
-    } else if (type === "noball") {
-      runDelta = 1;
-      extraDelta = 1;
-      ballDelta = 0;
-    }
-
-    const nextRuns = (Number(current.runs) || 0) + runDelta;
-    const nextWkts = Math.min(10, (Number(current.wickets) || 0) + wktDelta);
-    const nextBalls = (Number(current.balls) || 0) + ballDelta;
-    const nextExtras = (Number(current.extras) || 0) + extraDelta;
+    const result = applyQuickBall({
+      runs: Number(current.runs) || 0,
+      wickets: Number(current.wickets) || 0,
+      balls: Number(current.balls) || 0,
+      extras: Number(current.extras) || 0,
+    }, type);
+    const { event } = result;
 
     const nextInn: InnForm = {
       ...current,
-      runs: String(nextRuns),
-      wickets: String(nextWkts),
-      balls: String(nextBalls),
-      extras: String(nextExtras),
+      runs: String(result.runs),
+      wickets: String(result.wickets),
+      balls: String(result.balls),
+      extras: String(result.extras),
       status: "LIVE",
     };
 
     if (activeInnings === 1) setInn1(nextInn);
     else setInn2(nextInn);
 
-    // Trigger Broadcast live cues
-    if (isBoundaryFour) {
-      dispatchBroadcastCue({ action: "stinger", event: "four" });
-      dispatchBroadcastCue({ action: "action", name: "four" });
-    } else if (isBoundarySix) {
-      dispatchBroadcastCue({ action: "stinger", event: "six" });
-      dispatchBroadcastCue({ action: "action", name: "six" });
-    } else if (type === "wicket") {
-      dispatchBroadcastCue({ action: "stinger", event: "wicket" });
-      dispatchBroadcastCue({ action: "action", name: "wicket" });
-    }
-
-    const ovStr = `${Math.floor(nextBalls / 6)}.${nextBalls % 6}`;
+    // Every delivery advances the broadcast "This Over" strip. Boundary and
+    // wicket actions also own their stinger, so each click emits exactly once.
+    dispatchBroadcastCue({ action: "action", name: event.broadcastAction });
+    const ovStr = `${Math.floor(result.balls / 6)}.${result.balls % 6}`;
     dispatchBroadcastCue({
       action: "scoreUpdate",
-      data: { runs: nextRuns, wickets: nextWkts, overs: ovStr },
+      data: { runs: result.runs, wickets: result.wickets, overs: ovStr },
     });
 
     // Create undo group so innings + striker stat roll back together in a single undo step
     const undoGroup = `ball-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const ballLabel = type === "wicket" ? "WICKET" : type === "wide" ? "WIDE (+1)" : type === "noball" ? "NO BALL (+1)" : `+${type} RUN${type === "1" ? "" : "S"}`;
-    const undoLabel = `Ball: ${ballLabel} (${nextRuns}/${nextWkts} in ${ovStr} ov)`;
+    const undoLabel = `Ball: ${ballLabel} (${result.runs}/${result.wickets} in ${ovStr} ov)`;
 
-    // Save Innings to DB with undo journal
-    await saveInnings(activeInnings, nextInn, undoGroup, undoLabel);
+    try {
+      await api("/api/innings", {
+        method: "POST",
+        body: jsonBody({
+          matchId: match.id,
+          teamId: Number(nextInn.teamId),
+          inningsNumber: activeInnings,
+          runs: result.runs,
+          wickets: result.wickets,
+          balls: result.balls,
+          extras: result.extras,
+          target: nextInn.target ? Number(nextInn.target) : null,
+          status: nextInn.status,
+          undoGroup,
+          undoLabel,
+        }),
+      });
 
-    // Also update active striker player stat if striker selected
-    if (strikerId && ballDelta > 0 && type !== "wicket") {
-      const existingStat = match.stats?.find(
-        (s) => String(s.playerId) === strikerId && Number(s.innings) === activeInnings
-      );
-      const curRuns = existingStat?.runs || 0;
-      const curBalls = existingStat?.ballsFaced || 0;
-      const cur4s = existingStat?.fours || 0;
-      const cur6s = existingStat?.sixes || 0;
+      // Update the striker without erasing fielding/bowling values already in
+      // the same player-match row.
+      if (strikerId && event.legalBalls > 0) {
+        const existing = match.stats?.find(
+          (entry) => String(entry.playerId) === strikerId && Number(entry.innings) === activeInnings,
+        );
+        await api("/api/stats", {
+          method: "POST",
+          body: jsonBody({
+            matchId: match.id,
+            playerId: Number(strikerId),
+            teamId: Number(current.teamId),
+            innings: activeInnings,
+            runs: (existing?.runs || 0) + event.runs,
+            ballsFaced: (existing?.ballsFaced || 0) + event.legalBalls,
+            fours: (existing?.fours || 0) + (event.isFour ? 1 : 0),
+            sixes: (existing?.sixes || 0) + (event.isSix ? 1 : 0),
+            wickets: existing?.wickets || 0,
+            ballsBowled: existing?.ballsBowled || 0,
+            runsConceded: existing?.runsConceded || 0,
+            maidens: existing?.maidens || 0,
+            catches: existing?.catches || 0,
+            stumpings: existing?.stumpings || 0,
+            runOuts: existing?.runOuts || 0,
+            isOut: type === "wicket" ? true : existing?.isOut || false,
+            dismissal: type === "wicket" ? "Wicket" : existing?.dismissal || null,
+            undoGroup,
+            undoLabel,
+          }),
+        });
+      }
 
-      const pStat: StatForm = {
-        ...blankStat,
-        playerId: strikerId,
-        teamId: current.teamId,
-        innings: String(activeInnings),
-        runs: String(curRuns + runDelta),
-        ballsFaced: String(curBalls + ballDelta),
-        fours: String(cur4s + (isBoundaryFour ? 1 : 0)),
-        sixes: String(cur6s + (isBoundarySix ? 1 : 0)),
-      };
-      await saveStatValue(pStat, `Ball recorded: ${type.toUpperCase()}`, undoGroup, undoLabel);
+      if (bowlerId) {
+        const existing = match.stats?.find(
+          (entry) => String(entry.playerId) === bowlerId && Number(entry.innings) === activeInnings,
+        );
+        const bowlingTeamId = Number(current.teamId) === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+        await api("/api/stats", {
+          method: "POST",
+          body: jsonBody({
+            matchId: match.id,
+            playerId: Number(bowlerId),
+            teamId: bowlingTeamId,
+            innings: activeInnings,
+            runs: existing?.runs || 0,
+            ballsFaced: existing?.ballsFaced || 0,
+            fours: existing?.fours || 0,
+            sixes: existing?.sixes || 0,
+            wickets: (existing?.wickets || 0) + event.wickets,
+            ballsBowled: (existing?.ballsBowled || 0) + event.legalBalls,
+            runsConceded: (existing?.runsConceded || 0) + event.runs,
+            maidens: existing?.maidens || 0,
+            catches: existing?.catches || 0,
+            stumpings: existing?.stumpings || 0,
+            runOuts: existing?.runOuts || 0,
+            isOut: existing?.isOut || false,
+            dismissal: existing?.dismissal || null,
+            undoGroup,
+            undoLabel,
+          }),
+        });
+      }
+
+      const overEnded = event.legalBalls > 0 && result.balls % 6 === 0;
+      const oddRuns = event.runs % 2 === 1 && type !== "wicket";
+      if (oddRuns !== overEnded) {
+        const previousStriker = strikerId;
+        setStrikerId(nonStrikerId);
+        setNonStrikerId(previousStriker);
+      }
+
+      setToast(`Ball recorded: ${event.label}`);
+      const refreshed = await loadDetail(match.id);
+      await syncMatchToBroadcast(refreshed);
+      await fetchUndoHistory(match.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not record delivery");
+      await loadDetail(match.id);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -625,6 +687,9 @@ export default function ScoreEntryPage() {
   // Derive active innings scores for both teams for display in Hero
   const homeInnings = match?.innings?.find((i) => i.teamId === match.homeTeamId);
   const awayInnings = match?.innings?.find((i) => i.teamId === match.awayTeamId);
+  const activeForm = activeInnings === 1 ? inn1 : inn2;
+  const activeBattingTeam = match && activeForm?.teamId === String(match.awayTeamId) ? match.awayTeam : match?.homeTeam;
+  const activeBowlingTeam = match && activeBattingTeam?.id === match.homeTeamId ? match.awayTeam : match?.homeTeam;
 
   return (
     <>
@@ -813,7 +878,7 @@ export default function ScoreEntryPage() {
                     <button
                       type="button"
                       className="button compact"
-                      onClick={syncMatchToBroadcast}
+                      onClick={() => syncMatchToBroadcast()}
                       title="Sync current match score to live broadcast output"
                     >
                       <Tv size={13} /> Sync to Output
@@ -965,7 +1030,7 @@ export default function ScoreEntryPage() {
                       onChange={(e) => setStrikerId(e.target.value)}
                     >
                       <option value="">Select Striker</option>
-                      {(activeInnings === 1 ? match.homeTeam.players : match.awayTeam.players)?.map((p) => (
+                      {activeBattingTeam?.players?.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.displayName} ({humanRole(p.role)})
                         </option>
@@ -980,7 +1045,7 @@ export default function ScoreEntryPage() {
                       onChange={(e) => setNonStrikerId(e.target.value)}
                     >
                       <option value="">Select Non-Striker</option>
-                      {(activeInnings === 1 ? match.homeTeam.players : match.awayTeam.players)?.map((p) => (
+                      {activeBattingTeam?.players?.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.displayName}
                         </option>
@@ -995,7 +1060,7 @@ export default function ScoreEntryPage() {
                       onChange={(e) => setBowlerId(e.target.value)}
                     >
                       <option value="">Select Bowler</option>
-                      {(activeInnings === 1 ? match.awayTeam.players : match.homeTeam.players)?.map((p) => (
+                      {activeBowlingTeam?.players?.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.displayName} ({humanRole(p.role)})
                         </option>
@@ -1006,30 +1071,18 @@ export default function ScoreEntryPage() {
 
                 {/* INSTANT SCORING BUTTONS */}
                 <div className="ball-stepper-grid">
-                  <button type="button" className="ball-stepper-btn" onClick={() => handleQuickBall("0")} disabled={busy}>
-                    +0 DOT
-                  </button>
-                  <button type="button" className="ball-stepper-btn" onClick={() => handleQuickBall("1")} disabled={busy}>
-                    +1
-                  </button>
-                  <button type="button" className="ball-stepper-btn" onClick={() => handleQuickBall("2")} disabled={busy}>
-                    +2
-                  </button>
-                  <button type="button" className="ball-stepper-btn" onClick={() => handleQuickBall("3")} disabled={busy}>
-                    +3
-                  </button>
-                  <button type="button" className="ball-stepper-btn four" onClick={() => handleQuickBall("4")} disabled={busy}>
-                    FOUR 4
-                  </button>
-                  <button type="button" className="ball-stepper-btn six" onClick={() => handleQuickBall("6")} disabled={busy}>
-                    SIX 6
-                  </button>
-                  <button type="button" className="ball-stepper-btn wicket" onClick={() => handleQuickBall("wicket")} disabled={busy}>
-                    WICKET
-                  </button>
-                  <button type="button" className="ball-stepper-btn" onClick={() => handleQuickBall("wide")} disabled={busy}>
-                    WIDE
-                  </button>
+                  {QUICK_BALL_EVENTS.map((event) => (
+                    <button
+                      key={event.type}
+                      type="button"
+                      className={`ball-stepper-btn ${event.className || ""}`}
+                      onClick={() => handleQuickBall(event.type)}
+                      disabled={busy}
+                      data-ball-type={event.type}
+                    >
+                      {event.label}
+                    </button>
+                  ))}
                   <button
                     type="button"
                     className="ball-stepper-btn undo"

@@ -528,6 +528,18 @@ async function persist(data: NplSeason, full: boolean) {
             });
             p.id = player.id;
           }
+        } else {
+          // Lightweight fixture refreshes must retain database IDs in the cached
+          // roster. Score entry and season APIs require these IDs for selections.
+          const existingPlayers = await tx.player.findMany({
+            where: { teamId: team.id, isActive: true },
+            select: { id: true, displayName: true },
+          });
+          for (const p of t.players) {
+            p.id = existingPlayers.find(
+              (row) => row.displayName.trim().toLocaleLowerCase() === p.name.trim().toLocaleLowerCase(),
+            )?.id;
+          }
         }
       }
 
