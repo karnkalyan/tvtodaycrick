@@ -1,4 +1,28 @@
 import { spawn } from "node:child_process";
+import dns from "node:dns";
+
+if (dns && typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
+try {
+  const { Agent, setGlobalDispatcher } = await import("undici");
+  setGlobalDispatcher(
+    new Agent({
+      connect: {
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 250,
+        timeout: 8000,
+      },
+    })
+  );
+} catch {
+  // Undici dispatcher setup optional
+}
+
+process.env.NODE_OPTIONS = process.env.NODE_OPTIONS
+  ? `${process.env.NODE_OPTIONS} --dns-result-order=ipv4first`
+  : "--dns-result-order=ipv4first";
 
 console.log("==================================================================");
 console.log("   TV TODAY NPL CRICKET MANAGEMENT SYSTEM — PRODUCTION ENGINE");

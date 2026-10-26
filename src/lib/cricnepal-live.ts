@@ -1,7 +1,12 @@
 import { load } from "cheerio";
+import dns from "node:dns";
 import { prisma } from "./prisma";
 import { fetchSource } from "./npl-source";
 import type { Prisma } from "@prisma/client";
+
+if (dns && typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 export interface CricNepalParsedLiveMatch {
   sourceId?: string;
@@ -330,8 +335,19 @@ export function parseCricNepalMatchHtml(html: string, sourceUrl = ""): CricNepal
   };
 }
 
+interface FailureBackoff {
+  at: number;
+  error: string;
+}
+
+const urlFailureBackoffs = new Map<string, FailureBackoff>();
+const liveMatchCache = new Map<string, { at: number; data: CricNepalParsedLiveMatch }>();
+const BACKOFF_COOLDOWN_MS = 30000; // 30s cooldown before retrying a failed external URL
+const CACHE_TTL_MS = 3000; // 3s reuse cache for rapid polling
+
 /**
  * Fetches and parses a CricNepal live match from the given URL.
+ * Includes circuit-breaker backoff and short-term cache to prevent timeout loops.
  */
 export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNepalParsedLiveMatch | null> {
   let cleanUrl = matchUrl.trim();
@@ -343,16 +359,24 @@ export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNep
     return null;
   }
 
+  // Check short-term cache to avoid rapid duplicate fetches
+  const cached = liveMatchCache.get(cleanUrl);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  // Check circuit breaker / failure backoff: if recently failed, don't hammer external host
+  const failure = urlFailureBackoffs.get(cleanUrl);
+  if (failure && Date.now() - failure.at < BACKOFF_COOLDOWN_MS) {
+    return cached?.data || null;
+  }
+
   try {
-    const html = await fetchSource(cleanUrl);
-    return parseCricNepalMatchHtml(html, cleanUrl);
-  } catch (err) {
-    // If fetch failed, try one direct fallback
     const response = await fetch(cleanUrl, {
       cache: "no-store",
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(6000),
       headers: {
-        "User-Agent": "NPL-TVToday/1.0 (cricket data reader)",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
     });
@@ -360,7 +384,19 @@ export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNep
       throw new Error(`HTTP ${response.status}: ${cleanUrl}`);
     }
     const html = await response.text();
-    return parseCricNepalMatchHtml(html, cleanUrl);
+    const parsed = parseCricNepalMatchHtml(html, cleanUrl);
+    if (parsed) {
+      urlFailureBackoffs.delete(cleanUrl);
+      liveMatchCache.set(cleanUrl, { at: Date.now(), data: parsed });
+    }
+    return parsed;
+  } catch (err) {
+    const errorMsg = (err as any)?.cause?.message || (err instanceof Error ? err.message : String(err));
+    urlFailureBackoffs.set(cleanUrl, { at: Date.now(), error: errorMsg });
+    if (cached?.data) {
+      return cached.data;
+    }
+    throw err;
   }
 }
 

@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS="--dns-result-order=ipv4first"
 ENV PORT=3211
 ENV WS_PORT=3212
 

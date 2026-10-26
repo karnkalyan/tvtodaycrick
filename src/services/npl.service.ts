@@ -1,4 +1,9 @@
+import dns from "node:dns";
 import { prisma } from "../lib/prisma";
+
+if (dns && typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 import {
   fetchSource,
   parseFixtures,
@@ -719,6 +724,8 @@ export async function getNpl(year = "2026"): Promise<NplSeason> {
   return { ...(saved.payload as unknown as NplSeason), error: saved.lastError };
 }
 
+const lastLiveWarnByMatch = new Map<number, number>();
+
 /**
  * Lightweight real-time live score update (called by Auto-Sync)
  * CricNepal is primary live provider.
@@ -772,9 +779,13 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
             if (parsed.status === "LIVE") hasLive = true;
           }
         } catch (err) {
-          // Silent or concise log to avoid log spamming
-          const msg = (err as any)?.cause?.message || (err instanceof Error ? err.message : String(err));
-          console.warn(`[NplService] CricNepal sync skipped for match ${m.id} (${sourceUrl}):`, msg);
+          const now = Date.now();
+          const lastWarn = lastLiveWarnByMatch.get(m.id) || 0;
+          if (now - lastWarn > 60000) {
+            lastLiveWarnByMatch.set(m.id, now);
+            const msg = (err as any)?.cause?.message || (err instanceof Error ? err.message : String(err));
+            console.warn(`[NplService] CricNepal sync skipped for match ${m.id} (${sourceUrl}):`, msg);
+          }
         }
       }
     }

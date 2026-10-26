@@ -1,12 +1,24 @@
 import { load } from "cheerio";
+import dns from "node:dns";
 import type { NplFixture, NplPlayer } from "../types/npl";
+
+if (dns && typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 export const NPL_SOURCE = "https://www.cricnepal.com/tournament/nepal-premier-league-2026-207";
 export const SECONDARY_SCHEDULE = "https://nplt20league.com/schedule/";
 const origin = "https://www.cricnepal.com";
 export function sourceUrl(path: string) { const url = new URL(path, origin); if (url.origin !== origin) throw new Error("Unexpected cricket source URL"); return url.href; }
 export async function fetchSource(url: string) {
-  const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(25000), headers: { "User-Agent": "NPL-TVToday/1.0 (cricket data reader)", Accept: url.includes("/wp-json/") ? "application/json" : "text/html" } });
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Accept: url.includes("/wp-json/") ? "application/json" : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
   if (!response.ok) throw new Error(`Source returned HTTP ${response.status}: ${url}`);
   return response.text();
 }
