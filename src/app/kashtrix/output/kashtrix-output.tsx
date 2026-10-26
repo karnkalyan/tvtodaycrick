@@ -14,7 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { nepaliEventAnnouncement } from "@/lib/nepali-tts";
+import { nepaliEventSpeechCue } from "@/lib/nepali-tts";
 import styles from "./output.module.css";
 
 type BroadcastState = {
@@ -207,13 +207,15 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   const stateRef = useRef(state);
   const pollReady = useRef(false);
   const crowdAudio = useRef<HTMLAudioElement | null>(null);
+  const announcementSequence = useRef(0);
 
   useEffect(() => { stateRef.current = state; }, [state]);
 
   const announceEvent = useCallback((type: DeliveryEvent) => {
     if (!("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(nepaliEventAnnouncement(type));
+    const cue = nepaliEventSpeechCue(type, announcementSequence.current++);
+    const utterance = new SpeechSynthesisUtterance(cue.text);
     const voices = window.speechSynthesis.getVoices();
     const voicePriority = ["ne-np", "ne", "hi-in", "hi", "mr-in", "mr"];
     utterance.voice = voicePriority
@@ -222,11 +224,11 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
       || voices.find((voice) => voice.lang.toLowerCase().startsWith("en"))
       || null;
     utterance.lang = utterance.voice?.lang || "ne-NP";
-    utterance.rate = 0.8;
-    utterance.pitch = 0.74;
+    utterance.rate = cue.rate;
+    utterance.pitch = cue.pitch;
     utterance.volume = 1;
     const restoreCrowd = () => { if (crowdAudio.current) crowdAudio.current.volume = 0.14; };
-    if (crowdAudio.current) crowdAudio.current.volume = 0.045;
+    if (crowdAudio.current) crowdAudio.current.volume = cue.crowdVolume;
     utterance.onend = restoreCrowd;
     utterance.onerror = restoreCrowd;
     window.speechSynthesis.speak(utterance);
