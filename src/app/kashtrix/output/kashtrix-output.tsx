@@ -14,6 +14,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { nepaliEventAnnouncement } from "@/lib/nepali-tts";
 import styles from "./output.module.css";
 
 type BroadcastState = {
@@ -138,18 +139,6 @@ const TOKEN_EVENT: Record<string, DeliveryEvent> = {
   "0": "dot", "1": "run1", "2": "run2", "3": "run3", "4": "four", "6": "six", W: "wicket", WD: "wide", NB: "noBall",
 };
 
-const NEPALI_EVENT_VOICE: Record<DeliveryEvent, string> = {
-  dot: "डट बल",
-  run1: "एक रन",
-  run2: "दुई रन",
-  run3: "तीन रन",
-  four: "चौका!",
-  six: "छक्का!",
-  wicket: "विकेट!",
-  wide: "वाइड बल",
-  noBall: "नो बल",
-};
-
 function mergeState(current: BroadcastState, incoming?: BroadcastState | null): BroadcastState {
   if (!incoming) return current;
   return {
@@ -224,15 +213,17 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   const announceEvent = useCallback((type: DeliveryEvent) => {
     if (!("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(NEPALI_EVENT_VOICE[type]);
+    const utterance = new SpeechSynthesisUtterance(nepaliEventAnnouncement(type));
     const voices = window.speechSynthesis.getVoices();
-    utterance.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith("ne"))
-      || voices.find((voice) => voice.lang.toLowerCase().startsWith("hi"))
+    const voicePriority = ["ne-np", "ne", "hi-in", "hi", "mr-in", "mr"];
+    utterance.voice = voicePriority
+      .map((language) => voices.find((voice) => voice.lang.toLowerCase() === language || voice.lang.toLowerCase().startsWith(`${language}-`)))
+      .find(Boolean)
       || voices.find((voice) => voice.lang.toLowerCase().startsWith("en"))
       || null;
     utterance.lang = utterance.voice?.lang || "ne-NP";
-    utterance.rate = 0.82;
-    utterance.pitch = 0.78;
+    utterance.rate = 0.8;
+    utterance.pitch = 0.74;
     utterance.volume = 1;
     const restoreCrowd = () => { if (crowdAudio.current) crowdAudio.current.volume = 0.14; };
     if (crowdAudio.current) crowdAudio.current.volume = 0.045;
