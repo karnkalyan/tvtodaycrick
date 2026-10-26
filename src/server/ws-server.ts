@@ -1,10 +1,11 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { PrismaClient } from "@prisma/client";
+import { DEFAULT_BROADCAST_STATE } from "../lib/broadcast-state";
 
 const prisma = new PrismaClient();
 const PORT = Number(process.env.WS_PORT || 3001);
 
-let latestState: any = null;
+let latestState: any = structuredClone(DEFAULT_BROADCAST_STATE);
 let persistQueue: Promise<void> = Promise.resolve();
 
 const deliveryTokens: Record<string, { token: string; legal: boolean }> = {
@@ -42,6 +43,8 @@ async function initDbState() {
     if (record?.state) {
       latestState = record.state;
       console.log("[NPL WebSocket] Loaded initial broadcast state from MySQL database");
+    } else {
+      latestState = structuredClone(DEFAULT_BROADCAST_STATE);
     }
   } catch (err) {
     console.warn("[NPL WebSocket] Could not load state from DB on startup:", err);
@@ -82,6 +85,25 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
     console.log(`[NPL WebSocket] Broadcast server running on ws://localhost:${port}`);
   });
 
+  (global as any).__npl_ws_broadcast = (text: string) => {
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(text);
+      }
+    });
+  };
+
+  (global as any).__npl_ws_reset = () => {
+    latestState = structuredClone(DEFAULT_BROADCAST_STATE);
+    const text = JSON.stringify({
+      action: "reset",
+      type: "reset",
+      state: latestState,
+      timestamp: Date.now(),
+    });
+    (global as any).__npl_ws_broadcast(text);
+  };
+
   wss.on("connection", async (ws: WebSocket) => {
     // Always refresh latest state directly from MySQL database so clients never receive stale state
     try {
@@ -90,6 +112,8 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
       });
       if (record?.state) {
         latestState = record.state;
+      } else {
+        latestState = structuredClone(DEFAULT_BROADCAST_STATE);
       }
     } catch (err) {
       console.warn("[NPL WebSocket] Error reading fresh DB state on client connection:", err);
@@ -106,8 +130,14 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
         const msg = JSON.parse(text);
         const actionType = msg.action || msg.type;
 
-        if (!latestState) latestState = {};
-        if (!latestState.ui) latestState.ui = {};
+        if (actionType === "reset" || actionType === "resetMatch") {
+          latestState = structuredClone(msg.state || DEFAULT_BROADCAST_STATE);
+          persistState("reset", undefined, msg);
+        } else {
+          if (!latestState) latestState = structuredClone(DEFAULT_BROADCAST_STATE);
+          if (!latestState.ui) latestState.ui = {};
+        }
+
 
         // Track and persist layer / graphics states
         if (actionType === "show") {

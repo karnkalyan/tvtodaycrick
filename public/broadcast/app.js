@@ -1067,6 +1067,16 @@
         clearGraphics(false, false);
         break;
       }
+      case 'reset':
+      case 'resetMatch': {
+        stopAll(false, false);
+        state = deepClone(defaults);
+        state.ui.graphic = null;
+        state.ui.scoreMode = 'hidden';
+        render(prev, false);
+        saveState('reset', false);
+        break;
+      }
       case 'stopAll': {
         if(msg.clearScores || msg.stopScores){
           state.ui.scoreMode = 'hidden';

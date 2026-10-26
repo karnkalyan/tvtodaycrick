@@ -78,3 +78,28 @@ test("broadcast match feed exposes innings team assignments and real zero-over s
   assert.match(route, /homeScore: scoreText\(homeInnings\)/);
   assert.doesNotMatch(route, /inn1\.balls > 0[\s\S]{0,120}'20\.0'/);
 });
+
+test("clean reset wipes lingering match runs and displays NPL logo without audio gate", () => {
+  const outputCode = readFileSync(new URL("../src/app/kashtrix/output/kashtrix-output.tsx", import.meta.url), "utf8");
+  const appJs = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
+
+  // NPL official logo used instead of Trophy
+  assert.match(outputCode, /src="\/images\/npl-logo\.png"/);
+  assert.match(outputCode, /styles\.nplBrandLogo/);
+  assert.match(outputCode, /styles\.nplBrandLogoArena/);
+  assert.doesNotMatch(outputCode, /<Trophy/);
+
+  // Audio gate button removed
+  assert.doesNotMatch(outputCode, /ENABLE STADIUM AUDIO/);
+  assert.doesNotMatch(outputCode, /audioGate/);
+
+  // Reset cue receiver in app.js
+  assert.match(appJs, /case 'reset':/);
+  assert.match(appJs, /state = deepClone\(defaults\)/);
+
+  // Reset handling in kashtrix-output.tsx
+  assert.match(outputCode, /action === "reset"/);
+  assert.match(outputCode, /isResetIncoming/);
+  assert.match(outputCode, /playCricketSfx/);
+});
+

@@ -108,6 +108,27 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
       );
       setTimeout(() => setResetSuccess(null), 6000);
 
+      // Dispatch reset cues across all broadcast channels, WebSockets, and graphics screens
+      try {
+        const channel = new BroadcastChannel("npl-gfx-v8-cues");
+        channel.postMessage({ action: "reset", type: "reset" });
+        channel.close();
+      } catch {}
+
+      try {
+        localStorage.removeItem("npl-gfx-v8-state");
+      } catch {}
+
+      try {
+        const port = window.location.port === "3211" ? "3212" : window.location.port === "3000" ? "3001" : "3212";
+        const wsUrl = `ws://${window.location.hostname || "localhost"}:${port}`;
+        const ws = new WebSocket(wsUrl);
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ action: "reset", type: "reset" }));
+          setTimeout(() => ws.close(), 500);
+        };
+      } catch {}
+
       await season.resync();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to reset match details");
@@ -115,6 +136,7 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
       setIsResetting(false);
     }
   };
+
 
   const sidebar = useRef<HTMLElement>(null);
   const menu = useRef<HTMLButtonElement>(null);

@@ -69,3 +69,85 @@ export function nepaliEventSpeechCue(event: CricketSpeechEvent, sequence = 0): N
 export function nepaliEventAnnouncement(event: CricketSpeechEvent) {
   return nepaliEventSpeechCue(event).text;
 }
+
+const ENGLISH_EVENT_EXPRESSIONS: Record<CricketSpeechEvent, string[]> = {
+  six: [
+    "WHAT A MASSIVE SIX! Right into the crowd, that is huge!",
+    "THAT IS ENORMOUS! Clears the rope with power, maximum!",
+    "BOOM! Six runs! Clean strike sailing high into the stands!",
+    "SPECTACULAR HIT! All the way for a sensational six!",
+  ],
+  four: [
+    "FOUR RUNS! Cracking shot racing across the turf to the boundary!",
+    "BEAUTIFULLY TIMED! Flashes through the covers for four!",
+    "FOUR! Smashed away with perfection, finds the rope!",
+    "PUNCHED AWAY! One bounce and over the boundary for four!",
+  ],
+  wicket: [
+    "OUT! HE'S GONE! Timber! A massive breakthrough for the bowling side!",
+    "WICKET! Up goes the finger! What a sensational delivery!",
+    "CAUGHT! Gone! That is a huge dismissal, big celebration!",
+    "CLEAN BOWLED! Stumps shattered, what a crucial wicket!",
+  ],
+  dot: [
+    "Dot ball. Beaten outside off, tight bowling under pressure.",
+    "No run. Defended solidly back down the track.",
+    "Dot ball. Well bowled, keeping the pressure high.",
+  ],
+  run1: [
+    "One run. Pushed into the gap, quick single taken.",
+    "Sharp single taken, good rotation of strike.",
+    "Tucked off the hips for a comfortable single.",
+  ],
+  run2: [
+    "Two runs! Excellent running between the wickets.",
+    "They push hard and comfortably complete the second.",
+    "Driven into the deep, good hustle for two runs.",
+  ],
+  run3: [
+    "Three runs! Outstanding hustle in the deep.",
+    "Superb athletic running, they turn two into three!",
+  ],
+  wide: [
+    "Wide ball! Straying down the leg side, extra run conceded.",
+    "Wide called by the umpire. Outside the tramlines.",
+  ],
+  noBall: [
+    "NO BALL! The bowler oversteps the crease! Free hit coming next!",
+    "Overstepped, it's a no ball! Free hit signaled!",
+  ],
+};
+
+const ENGLISH_EVENT_PROSODY: Record<CricketSpeechEvent, { rate: number; pitch: number; crowdVolume: number }> = {
+  six: { rate: 1.08, pitch: 1.18, crowdVolume: 0.02 },
+  four: { rate: 1.08, pitch: 1.12, crowdVolume: 0.03 },
+  wicket: { rate: 1.12, pitch: 1.22, crowdVolume: 0.02 },
+  dot: { rate: 1.02, pitch: 0.98, crowdVolume: 0.06 },
+  run1: { rate: 1.05, pitch: 1.02, crowdVolume: 0.05 },
+  run2: { rate: 1.06, pitch: 1.04, crowdVolume: 0.045 },
+  run3: { rate: 1.08, pitch: 1.08, crowdVolume: 0.04 },
+  wide: { rate: 1.06, pitch: 1.1, crowdVolume: 0.045 },
+  noBall: { rate: 1.1, pitch: 1.18, crowdVolume: 0.04 },
+};
+
+export function broadcastEventVocalCue(
+  event: CricketSpeechEvent,
+  sequence = 0,
+  preferEnglish = false,
+): { text: string; rate: number; pitch: number; crowdVolume: number; lang: string } {
+  if (preferEnglish) {
+    const list = ENGLISH_EVENT_EXPRESSIONS[event];
+    const index = Math.abs(sequence) % list.length;
+    return {
+      text: list[index],
+      ...ENGLISH_EVENT_PROSODY[event],
+      lang: "en-US",
+    };
+  }
+  const nepaliCue = nepaliEventSpeechCue(event, sequence);
+  return {
+    ...nepaliCue,
+    lang: "ne-NP",
+  };
+}
+

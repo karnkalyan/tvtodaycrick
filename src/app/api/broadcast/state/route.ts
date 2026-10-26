@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { mergeBroadcastState } from "@/lib/broadcast-state";
+import { mergeBroadcastState, DEFAULT_BROADCAST_STATE } from "@/lib/broadcast-state";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +10,11 @@ export async function GET() {
       where: { id: "current" },
     });
 
-    if (!record) {
-      return NextResponse.json({ state: null });
+    if (!record || !record.state) {
+      return NextResponse.json(
+        { state: DEFAULT_BROADCAST_STATE, isReset: true, updatedAt: new Date().toISOString() },
+        { headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
     }
 
     return NextResponse.json(
@@ -33,6 +36,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "State payload required" }, { status: 400 });
     }
 
+    const isResetAction = action === "reset" || action === "resetMatch" || body.reset === true;
+
     // Score entry and the broadcast director own different parts of the same
     // document. Merge partial writes so one client cannot erase another
     // client's recent deliveries, players, standings, or UI settings.
@@ -40,13 +45,14 @@ export async function POST(request: Request) {
       const existing = await (tx as any).broadcastState.findUnique({
         where: { id: "current" },
       });
-      const mergedState = mergeBroadcastState(existing?.state, state);
+      const mergedState = isResetAction ? state : mergeBroadcastState(existing?.state, state);
       return (tx as any).broadcastState.upsert({
         where: { id: "current" },
         create: { id: "current", state: mergedState },
         update: { state: mergedState },
       });
     });
+
 
     // Log the event to BroadcastEvent table
     if (action) {

@@ -9,13 +9,12 @@ import {
   Shield,
   Sparkles,
   Target,
-  Trophy,
   UserRound,
-  Volume2,
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { nepaliEventSpeechCue } from "@/lib/nepali-tts";
+import { broadcastEventVocalCue } from "@/lib/nepali-tts";
+import { playCricketSfx, unlockAudioContext } from "@/lib/cricket-sfx";
 import styles from "./output.module.css";
 
 type BroadcastState = {
@@ -142,12 +141,28 @@ const TOKEN_EVENT: Record<string, DeliveryEvent> = {
 
 function mergeState(current: BroadcastState, incoming?: BroadcastState | null): BroadcastState {
   if (!incoming) return current;
+  const isReset =
+    incoming.score &&
+    Number(incoming.score.runs ?? 0) === 0 &&
+    Number(incoming.score.wickets ?? 0) === 0 &&
+    (incoming.score.overs === "0.0" || incoming.score.overs === "0");
+  const resetLiveOverrides = isReset
+    ? {
+        strikerRuns: "0",
+        strikerBalls: "0",
+        nonStrikerRuns: "0",
+        nonStrikerBalls: "0",
+        bowlerFigures: "0/0",
+        bowlerOvers: "0.0",
+        rateText: "MATCH NOT STARTED",
+      }
+    : {};
   return {
     ...current,
     ...incoming,
     match: { ...current.match, ...incoming.match },
     score: { ...current.score, ...incoming.score },
-    live: { ...current.live, ...incoming.live },
+    live: { ...current.live, ...resetLiveOverrides, ...incoming.live },
   };
 }
 
@@ -201,7 +216,6 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   const [state, setState] = useState<BroadcastState>(DEFAULT_STATE);
   const [teams, setTeams] = useState<NplTeam[]>([]);
   const [connected, setConnected] = useState(false);
-  const [audioBlocked, setAudioBlocked] = useState(false);
   const [event, setEvent] = useState<{ type: DeliveryEvent; key: number } | null>(null);
   const eventTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEvent = useRef({ type: "" as string, at: 0 });
@@ -214,21 +228,31 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   useEffect(() => { stateRef.current = state; }, [state]);
 
   const announceEvent = useCallback((type: DeliveryEvent) => {
-    if (!("speechSynthesis" in window)) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
-    const cue = nepaliEventSpeechCue(type, announcementSequence.current++);
-    const utterance = new SpeechSynthesisUtterance(cue.text);
+
     const voices = window.speechSynthesis.getVoices();
     const voicePriority = ["ne-np", "ne", "hi-in", "hi", "mr-in", "mr"];
-    utterance.voice = voicePriority
+    const indicVoice = voicePriority
       .map((language) => voices.find((voice) => voice.lang.toLowerCase() === language || voice.lang.toLowerCase().startsWith(`${language}-`)))
-      .find(Boolean)
-      || voices.find((voice) => voice.lang.toLowerCase().startsWith("en"))
-      || null;
-    utterance.lang = utterance.voice?.lang || "ne-NP";
+      .find(Boolean) || null;
+
+    // Bold expressions: use Indic voice if available, otherwise bold punchy English broadcast commentary
+    const cue = broadcastEventVocalCue(type, announcementSequence.current++, !indicVoice);
+    const utterance = new SpeechSynthesisUtterance(cue.text);
+
+    if (indicVoice) {
+      utterance.voice = indicVoice;
+      utterance.lang = indicVoice.lang;
+    } else {
+      utterance.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith("en")) || null;
+      utterance.lang = utterance.voice?.lang || "en-US";
+    }
+
     utterance.rate = cue.rate;
     utterance.pitch = cue.pitch;
     utterance.volume = 1;
+
     const restoreCrowd = () => { if (crowdAudio.current) crowdAudio.current.volume = 0.22; };
     if (crowdAudio.current) crowdAudio.current.volume = cue.crowdVolume;
     utterance.onend = restoreCrowd;
@@ -242,46 +266,92 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
     lastEvent.current = { type, at: now };
     if (eventTimer.current) clearTimeout(eventTimer.current);
     setEvent({ type, key: now });
+
+    // 1. Synthesize bold, distinctive broadcast stadium sound effect
+    playCricketSfx(type);
+
+    // 2. Announce energetic vocal commentary
     announceEvent(type);
+
     const major = type === "six" || type === "four" || type === "wicket";
     eventTimer.current = setTimeout(() => setEvent(null), major ? 3300 : 2500);
   }, [announceEvent]);
 
+  // Default enable audio: starts automatically and unlocks seamlessly without visual prompt
   useEffect(() => {
     const audio = crowdAudio.current;
-    if (!audio) return;
-    audio.volume = 0.22;
-    const start = () => {
-      void audio.play()
-        .then(() => setAudioBlocked(false))
-        .catch(() => setAudioBlocked(true));
+    if (audio) {
+      audio.muted = false;
+      audio.volume = 0.22;
+      void audio.play().catch(() => {});
+    }
+
+    const unlock = () => {
+      unlockAudioContext();
+      if (crowdAudio.current) {
+        crowdAudio.current.muted = false;
+        void crowdAudio.current.play().catch(() => {});
+      }
     };
-    const resumeVisible = () => { if (!document.hidden) start(); };
-    start();
-    window.addEventListener("pointerdown", start, { once: true });
-    window.addEventListener("keydown", start, { once: true });
+
+    const resumeVisible = () => { if (!document.hidden) unlock(); };
+
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock, { passive: true });
+    window.addEventListener("click", unlock, { passive: true });
+    window.addEventListener("touchstart", unlock, { passive: true });
     document.addEventListener("visibilitychange", resumeVisible);
+
     return () => {
       document.removeEventListener("visibilitychange", resumeVisible);
-      window.removeEventListener("pointerdown", start);
-      window.removeEventListener("keydown", start);
-      audio.pause();
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("touchstart", unlock);
+      audio?.pause();
       window.speechSynthesis?.cancel();
     };
   }, []);
 
-  const enableAudio = useCallback(() => {
-    const audio = crowdAudio.current;
-    if (!audio) return;
-    audio.muted = false;
-    audio.volume = 0.22;
-    void audio.play().then(() => setAudioBlocked(false)).catch(() => setAudioBlocked(true));
-  }, []);
-
   const applyIncomingState = useCallback((incoming?: BroadcastState | null, inferDelivery = false) => {
-    if (!incoming) return;
+    if (!incoming) {
+      stateRef.current = DEFAULT_STATE;
+      setState(DEFAULT_STATE);
+      return;
+    }
     const previous = stateRef.current;
-    if (inferDelivery && pollReady.current && !connectedRef.current) {
+
+    const inRuns = Number(incoming.score?.runs ?? 0);
+    const inWickets = Number(incoming.score?.wickets ?? 0);
+    const inOvers = String(incoming.score?.overs ?? "0.0");
+    const isResetIncoming = inRuns === 0 && inWickets === 0 && (inOvers === "0.0" || inOvers === "0");
+    const hadPreviousData = Number(previous.score?.runs ?? 0) > 0 || Number(previous.score?.wickets ?? 0) > 0 || (previous.score?.overs && previous.score.overs !== "0.0");
+
+    // Clean game reset detection: wipe previous match numbers and player cards
+    if (isResetIncoming && hadPreviousData) {
+      const cleanReset: BroadcastState = {
+        ...DEFAULT_STATE,
+        match: { ...DEFAULT_STATE.match, ...(incoming.match || {}) },
+        score: { runs: 0, wickets: 0, overs: "0.0", recent: ["-", "-", "-", "-", "-", "-"] },
+        live: {
+          ...DEFAULT_STATE.live,
+          ...(incoming.live || {}),
+          strikerRuns: "0",
+          strikerBalls: "0",
+          nonStrikerRuns: "0",
+          nonStrikerBalls: "0",
+          bowlerFigures: "0/0",
+          bowlerOvers: "0.0",
+          rateText: "MATCH NOT STARTED",
+        },
+      };
+      stateRef.current = cleanReset;
+      setState(cleanReset);
+      pollReady.current = true;
+      return;
+    }
+
+    if (inferDelivery && pollReady.current && !connectedRef.current && !isResetIncoming) {
       const oldRecent = previous.score?.recent || [];
       const nextRecent = incoming.score?.recent || [];
       const changed = JSON.stringify(oldRecent) !== JSON.stringify(nextRecent);
@@ -313,7 +383,13 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
         ]);
         if (!cancelled && stateResponse.ok) {
           const payload = await stateResponse.json();
-          applyIncomingState(payload.state, false);
+          if (payload.isReset || !payload.state) {
+            const clean = payload.state ? mergeState(DEFAULT_STATE, payload.state) : DEFAULT_STATE;
+            stateRef.current = clean;
+            setState(clean);
+          } else {
+            applyIncomingState(payload.state, false);
+          }
         }
         if (!cancelled && dataResponse.ok) {
           const payload = await dataResponse.json();
@@ -324,6 +400,25 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
     load();
     return () => { cancelled = true; };
   }, [applyIncomingState]);
+
+  // Listen to cross-tab BroadcastChannel for instant match resets
+  useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel("npl-gfx-v8-cues");
+      channel.onmessage = (e) => {
+        const msg = e.data;
+        if (!msg) return;
+        const action = msg.action || msg.type;
+        if (action === "reset" || action === "resetMatch" || action === "clearMatch") {
+          const resetState = msg.state ? mergeState(DEFAULT_STATE, msg.state) : DEFAULT_STATE;
+          stateRef.current = resetState;
+          setState(resetState);
+        }
+      };
+    } catch {}
+    return () => { channel?.close(); };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -341,6 +436,12 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
           try {
             const packet = JSON.parse(message.data);
             const action = packet.action || packet.type;
+            if (action === "reset" || action === "resetMatch" || action === "clearMatch") {
+              const resetState = packet.state ? mergeState(DEFAULT_STATE, packet.state) : DEFAULT_STATE;
+              stateRef.current = resetState;
+              setState(resetState);
+              return;
+            }
             if (action === "init" && packet.state) applyIncomingState(packet.state, false);
             if (action === "action") {
               const type = normalizeEvent(packet.name || packet.data?.name);
@@ -378,7 +479,13 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
         const response = await fetch("/api/broadcast/state", { cache: "no-store" });
         if (!response.ok) return;
         const payload = await response.json();
-        applyIncomingState(payload.state, true);
+        if (payload.isReset || !payload.state) {
+          const clean = payload.state ? mergeState(DEFAULT_STATE, payload.state) : DEFAULT_STATE;
+          stateRef.current = clean;
+          setState(clean);
+        } else {
+          applyIncomingState(payload.state, true);
+        }
       } catch { /* WebSocket or the last persisted state continues to render. */ }
     }, 1500);
     return () => clearInterval(timer);
@@ -422,17 +529,18 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   }) as React.CSSProperties, [teamA.primary, teamA.secondary, teamB.primary, teamB.secondary]);
 
   const audioBed = <audio ref={crowdAudio} src="/audio/kashtrix/stadium-crowd.ogg" autoPlay loop preload="auto" playsInline aria-hidden="true" />;
-  const audioGate = audioBlocked ? <button className={styles.audioGate} type="button" onClick={enableAudio}><Volume2 /> ENABLE STADIUM AUDIO</button> : null;
 
   if (variant === "editorial") {
     return (
       <main className={styles.editorialOutput} style={theme}>
         {audioBed}
-        {audioGate}
         <div className={styles.editorialTexture} aria-hidden="true" />
         <div className={styles.editorialPitch} aria-hidden="true"><i /><i /><i /><b /><b /></div>
         <header className={styles.editorialHeader}>
-          <div className={styles.editorialBrand}><Trophy /><div><small>NEPAL PREMIER LEAGUE</small><strong>KASHTRIX MATCHBOARD</strong></div></div>
+          <div className={styles.editorialBrand}>
+            <img src="/images/npl-logo.png" alt="Nepal Premier League" className={styles.nplBrandLogo} />
+            <div><small>NEPAL PREMIER LEAGUE</small><strong>KASHTRIX MATCHBOARD</strong></div>
+          </div>
           <div className={styles.editorialInnings}>{state.live?.innings || "MATCH SCHEDULED"}</div>
           <div className={styles.editorialLive}><i className={connected ? styles.connected : undefined} /> {connected ? "LIVE" : "SYNCING"} <Radio /></div>
         </header>
@@ -477,14 +585,13 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   return (
     <main className={styles.output} style={theme}>
       {audioBed}
-      {audioGate}
       <div className={styles.virtualSet} aria-hidden="true" />
       <div className={styles.setShade} aria-hidden="true" />
       <div className={styles.lightBeams} aria-hidden="true"><i /><i /><i /></div>
 
       <header className={styles.topBar}>
         <div className={styles.brandLockup}>
-          <span className={styles.brandIcon}><Trophy size={25} /></span>
+          <img src="/images/npl-logo.png" alt="Nepal Premier League" className={styles.nplBrandLogoArena} />
           <div><small>NEPAL PREMIER LEAGUE</small><strong>KASHTRIX VIRTUAL ARENA</strong></div>
         </div>
         <div className={styles.matchIdentity}>

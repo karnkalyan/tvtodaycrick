@@ -2,6 +2,7 @@ import { getNpl } from "./npl.service";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { journaledWrite, scoreUndoService, type UndoMeta } from "./score-undo.service";
+import { DEFAULT_BROADCAST_STATE } from "@/lib/broadcast-state";
 
 export const matchService = {
   list: (year = "2026") => prisma.match.findMany({
@@ -65,7 +66,7 @@ export const matchService = {
   undoHistory: (matchId: number) => scoreUndoService.history(matchId),
   undoLast: (matchId: number) => scoreUndoService.undoLast(matchId),
   truncateMatchData: async (season?: string) => {
-    return prisma.$transaction(
+    const result = await prisma.$transaction(
       async (tx) => {
         const deletedEvents = await tx.scoreEvent.deleteMany({});
         const deletedStats = await tx.playerMatchStat.deleteMany({});
@@ -96,7 +97,18 @@ export const matchService = {
             netRunRate: 0,
           },
         });
-        await tx.broadcastState.deleteMany({});
+        await (tx as any).broadcastState.upsert({
+          where: { id: "current" },
+          create: { id: "current", state: DEFAULT_BROADCAST_STATE as any },
+          update: { state: DEFAULT_BROADCAST_STATE as any },
+        });
+        await (tx as any).broadcastEvent.create({
+          data: {
+            action: "reset",
+            layer: "system",
+            payload: { action: "reset", state: DEFAULT_BROADCAST_STATE } as any,
+          },
+        });
 
         return {
           deletedEvents: deletedEvents.count,
@@ -108,5 +120,12 @@ export const matchService = {
       },
       { timeout: 30000 }
     );
+    try {
+      if (typeof (global as any).__npl_ws_reset === "function") {
+        (global as any).__npl_ws_reset();
+      }
+    } catch { /* WebSocket may be running in another process */ }
+    return result;
   },
 };
+

@@ -23,3 +23,44 @@ export function mergeBroadcastState(current: unknown, incoming: unknown): Broadc
   }
   return merged;
 }
+
+export const DEFAULT_BROADCAST_STATE: BroadcastState = {
+  match: {
+    teamA: "LUL",
+    teamB: "SPR",
+    teamAName: "Lumbini Lions",
+    teamBName: "Sudurpaschim Royals",
+    inningsNumber: 1,
+  },
+  score: {
+    runs: 0,
+    wickets: 0,
+    overs: "0.0",
+    recent: ["-", "-", "-", "-", "-", "-"],
+    target: null,
+  },
+  live: {
+    innings: "MATCH SCHEDULED",
+    rateText: "MATCH NOT STARTED",
+    strikerName: "BATTER",
+    strikerRuns: "0",
+    strikerBalls: "0",
+    nonStrikerName: "NON-STRIKER",
+    nonStrikerRuns: "0",
+    nonStrikerBalls: "0",
+    bowlerName: "BOWLER",
+    bowlerFigures: "0/0",
+    bowlerOvers: "0.0",
+    requirement: "MATCH SCHEDULED",
+    matchLabel: "NEPAL PREMIER LEAGUE",
+    venue: "TU INTERNATIONAL CRICKET GROUND, KIRTIPUR",
+    tossText: "TOSS NOT YET RECORDED",
+    target: "-",
+  },
+  fow: [],
+  ui: {
+    graphic: null,
+    scoreMode: "hidden",
+  },
+};
+
