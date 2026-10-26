@@ -33,6 +33,7 @@ import {
 } from "../lib/nplt20-api";
 import { downloadTeamLogo, downloadPlayerImage } from "../lib/npl-asset-manager";
 import { fetchCricNepalLiveMatch, applyCricNepalMatchToDb } from "../lib/cricnepal-live";
+import { fetchOnlineKhabarLiveMatch, getOnlineKhabarUrlForMatch } from "../lib/onlinekhabar-live";
 import type { NplSeason, NplTeam, NplPlayer, NplFixture } from "../types/npl";
 import type { BattingStyle, BowlingStyle, PlayerRole, Prisma } from "@prisma/client";
 
@@ -756,36 +757,75 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
             take: 2,
           });
 
+    const settings = await getSourceSettings(year);
+    const preferredProvider = settings.provider;
+
     for (const m of candidateMatches) {
-      let sourceUrl = "";
+      let cnUrl = "";
+      let okUrl = "";
+
       if (m.notes) {
-        const matchUrlLine = m.notes.match(/Source:\s*(https?:\/\/[^\s]+cricnepal\.com\/match\/[^\s\r\n]+)/i);
-        if (matchUrlLine) sourceUrl = matchUrlLine[1].trim();
+        const cnMatch = m.notes.match(/Source:\s*(https?:\/\/[^\s]+cricnepal\.com\/match\/[^\s\r\n]+)/i);
+        if (cnMatch) cnUrl = cnMatch[1].trim();
+        const okMatch = m.notes.match(/Source:\s*(https?:\/\/[^\s]+onlinekhabar\.com\/[^\s\r\n]+)/i);
+        if (okMatch) okUrl = okMatch[1].trim();
       }
+
+      // OnlineKhabar URL fallback based on match number (Match 1 -> 315, Match 2 -> 316, etc.)
+      if (!okUrl) {
+        okUrl = getOnlineKhabarUrlForMatch(m.matchNumber || "") || "";
+      }
+
+      // CricNepal URL fallback
       if (
-        !sourceUrl &&
+        !cnUrl &&
         year === "2026" &&
         (m.matchNumber === "Season3-M1" || m.matchNumber === "Match 1" || m.title.toLowerCase().includes("lumbini"))
       ) {
-        sourceUrl = "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
+        cnUrl = "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
       }
 
-      if (sourceUrl) {
+      let parsed: any = null;
+
+      // Primary attempt based on provider preference, with automatic fallback
+      if (preferredProvider === "onlinekhabar" && okUrl) {
         try {
-          const parsed = await fetchCricNepalLiveMatch(sourceUrl);
-          if (parsed) {
-            await applyCricNepalMatchToDb(m.id, parsed);
-            updatedCount++;
-            if (parsed.status === "LIVE") hasLive = true;
+          parsed = await fetchOnlineKhabarLiveMatch(okUrl);
+        } catch {
+          if (cnUrl) {
+            try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
           }
-        } catch (err) {
-          const now = Date.now();
-          const lastWarn = lastLiveWarnByMatch.get(m.id) || 0;
-          if (now - lastWarn > 60000) {
-            lastLiveWarnByMatch.set(m.id, now);
-            const msg = (err as any)?.cause?.message || (err instanceof Error ? err.message : String(err));
-            console.warn(`[NplService] CricNepal sync skipped for match ${m.id} (${sourceUrl}):`, msg);
+        }
+      } else {
+        // Default: try CricNepal first
+        if (cnUrl) {
+          try {
+            parsed = await fetchCricNepalLiveMatch(cnUrl);
+          } catch {
+            // CricNepal unavailable or timed out -> fallback to OnlineKhabar
           }
+        }
+        if (!parsed && okUrl) {
+          try {
+            parsed = await fetchOnlineKhabarLiveMatch(okUrl);
+          } catch {}
+        }
+      }
+
+      if (parsed) {
+        try {
+          await applyCricNepalMatchToDb(m.id, parsed);
+          updatedCount++;
+          if (parsed.status === "LIVE") hasLive = true;
+        } catch (dbErr) {
+          console.warn(`[NplService] Failed to apply live match details to DB for match ${m.id}:`, dbErr);
+        }
+      } else {
+        const now = Date.now();
+        const lastWarn = lastLiveWarnByMatch.get(m.id) || 0;
+        if (now - lastWarn > 60000) {
+          lastLiveWarnByMatch.set(m.id, now);
+          console.warn(`[NplService] Live sync skipped for match ${m.id} (tried ${cnUrl || "no-cn"} / ${okUrl || "no-ok"})`);
         }
       }
     }

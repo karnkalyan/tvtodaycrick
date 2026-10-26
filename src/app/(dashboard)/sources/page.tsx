@@ -14,6 +14,7 @@ interface Settings {
   secondaryUrl: string | null;
   nplt20Url: string;
   cricnepalUrl: string;
+  onlinekhabarUrl?: string;
 }
 
 export default function SourcesPage() {
@@ -36,9 +37,12 @@ export default function SourcesPage() {
   async function handleProviderSelect(prov: NplProvider) {
     setSelectedProvider(prov);
     if (settings) {
-      const correctUrl = prov === "cricnepal"
-        ? (settings.sourceUrl && settings.sourceUrl.includes("cricnepal.com") ? settings.sourceUrl : settings.cricnepalUrl)
-        : settings.nplt20Url;
+      const correctUrl =
+        prov === "cricnepal"
+          ? (settings.sourceUrl && settings.sourceUrl.includes("cricnepal.com") ? settings.sourceUrl : settings.cricnepalUrl)
+          : prov === "onlinekhabar"
+          ? (settings.sourceUrl && settings.sourceUrl.includes("onlinekhabar.com") ? settings.sourceUrl : settings.onlinekhabarUrl || "https://www.onlinekhabar.com/cricket-tournament/npl-nepal-premier-league-2026")
+          : settings.nplt20Url;
       setSettings({
         ...settings,
         provider: prov,
@@ -47,7 +51,7 @@ export default function SourcesPage() {
     }
     try {
       await switchProvider(prov);
-      setMessage(`Switched data source to ${prov === "nplt20league" ? "nplt20league.com" : "cricnepal.com"}.`);
+      setMessage(`Switched data source to ${prov}.`);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to switch data source");
@@ -56,9 +60,12 @@ export default function SourcesPage() {
 
   async function save() {
     try {
-      const urlToSave = selectedProvider === "cricnepal"
-        ? (settings?.sourceUrl && settings.sourceUrl.includes("cricnepal.com") ? settings.sourceUrl : settings?.cricnepalUrl)
-        : settings?.nplt20Url;
+      const urlToSave =
+        selectedProvider === "cricnepal"
+          ? (settings?.sourceUrl && settings.sourceUrl.includes("cricnepal.com") ? settings.sourceUrl : settings?.cricnepalUrl)
+          : selectedProvider === "onlinekhabar"
+          ? (settings?.sourceUrl && settings.sourceUrl.includes("onlinekhabar.com") ? settings.sourceUrl : settings?.onlinekhabarUrl || "https://www.onlinekhabar.com/cricket-tournament/npl-nepal-premier-league-2026")
+          : settings?.nplt20Url;
 
       await api(`/api/npl/sources?season=${year}`, {
         method: "PUT",
@@ -185,6 +192,45 @@ export default function SourcesPage() {
                     Provides fixture schedules and news announcements. (Player images and team crests are automatically upgraded using high-res nplt20league assets).
                   </p>
                   <small style={{ color: "var(--text)", fontFamily: "monospace", fontSize: 11 }}>{settings.cricnepalUrl}</small>
+                </div>
+
+                {/* Option 3: onlinekhabar.com */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => void handleProviderSelect("onlinekhabar")}
+                  style={{
+                    padding: 20,
+                    borderRadius: "var(--radius-md)",
+                    border: `2px solid ${selectedProvider === "onlinekhabar" ? "var(--accent)" : "var(--line)"}`,
+                    background: selectedProvider === "onlinekhabar" ? "color-mix(in srgb, var(--accent) 8%, var(--surface))" : "var(--surface-2)",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease",
+                    position: "relative",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span className="nav-icon tone-emerald" style={{ width: 36, height: 36 }}>
+                        <RefreshCw size={18} />
+                      </span>
+                      <div>
+                        <strong style={{ fontSize: 15 }}>onlinekhabar.com</strong>
+                        <span style={{ display: "block", fontSize: 11, color: "#10b981", fontWeight: 600 }}>LIVE SCORECARDS · MATCH FEEDS</span>
+                      </div>
+                    </div>
+                    {selectedProvider === "onlinekhabar" ? (
+                      <CheckCircle2 size={20} color="var(--accent)" />
+                    ) : (
+                      <span className="badge" style={{ fontSize: 11 }}>Click to Select</span>
+                    )}
+                  </div>
+                  <p style={{ fontSize: 12, color: "var(--muted)", margin: "14px 0 10px", lineHeight: 1.5 }}>
+                    Ultra-fast live JSON match feeds, toss, extras (byes, leg byes, wides), fall of wickets, CRR, and complete player scorecards.
+                  </p>
+                  <small style={{ color: "var(--text)", fontFamily: "monospace", fontSize: 11 }}>
+                    https://www.onlinekhabar.com/cricket-match/315 (+1 per match)
+                  </small>
                 </div>
               </div>
 

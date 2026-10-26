@@ -77,6 +77,28 @@ export interface CricNepalParsedLiveMatch {
     } | null;
     crr?: number;
   };
+  playerPerformances?: Array<{
+    name: string;
+    teamName?: string;
+    innings: number;
+    type: "BATSMAN" | "BOWLER";
+    batting?: {
+      runs: number;
+      balls: number;
+      fours: number;
+      sixes: number;
+      strikeRate: number;
+      dismissal?: string;
+      isNotOut: boolean;
+    };
+    bowling?: {
+      overs: string;
+      maidens: number;
+      runs: number;
+      wickets: number;
+      economy: number;
+    };
+  }>;
 }
 
 /**
@@ -678,6 +700,112 @@ export async function applyCricNepalMatchToDb(
                 runsConceded: runsToSave,
                 wickets: wicketsToSave,
                 maidens: bowler.maidens || undefined,
+              },
+            });
+          }
+        }
+      }
+
+      // 5. Reconcile Full Innings Scorecard (Batters and Bowlers) if available
+      if (Array.isArray(data.playerPerformances) && data.playerPerformances.length > 0) {
+        const allPlayers = [...match.homeTeam.players, ...match.awayTeam.players];
+        for (const perf of data.playerPerformances) {
+          const innNum = perf.innings || 1;
+          const player = allPlayers.find(
+            (p) =>
+              p.displayName.trim().toLowerCase() === perf.name.trim().toLowerCase() ||
+              p.displayName.toLowerCase().includes(perf.name.toLowerCase()) ||
+              perf.name.toLowerCase().includes(p.displayName.toLowerCase())
+          );
+          if (!player) continue;
+
+          const existingStat = await tx.playerMatchStat.findUnique({
+            where: {
+              matchId_playerId_innings: {
+                matchId: match.id,
+                playerId: player.id,
+                innings: innNum,
+              },
+            },
+          });
+
+          if (perf.type === "BATSMAN" && perf.batting) {
+            const b = perf.batting;
+            const runsToSave =
+              existingStat && !options.forceOverwrite && existingStat.ballsFaced > b.balls
+                ? existingStat.runs
+                : b.runs;
+            const ballsToSave =
+              existingStat && !options.forceOverwrite && existingStat.ballsFaced > b.balls
+                ? existingStat.ballsFaced
+                : b.balls;
+
+            await tx.playerMatchStat.upsert({
+              where: {
+                matchId_playerId_innings: {
+                  matchId: match.id,
+                  playerId: player.id,
+                  innings: innNum,
+                },
+              },
+              create: {
+                matchId: match.id,
+                playerId: player.id,
+                teamId: player.teamId,
+                innings: innNum,
+                runs: runsToSave,
+                ballsFaced: ballsToSave,
+                fours: b.fours,
+                sixes: b.sixes,
+                isOut: !b.isNotOut,
+              },
+              update: {
+                runs: runsToSave,
+                ballsFaced: ballsToSave,
+                fours: b.fours,
+                sixes: b.sixes,
+                isOut: !b.isNotOut,
+              },
+            });
+          } else if (perf.type === "BOWLER" && perf.bowling) {
+            const bw = perf.bowling;
+            const ballsBowled = oversStringToBalls(bw.overs);
+            const ballsToSave =
+              existingStat && !options.forceOverwrite && existingStat.ballsBowled > ballsBowled
+                ? existingStat.ballsBowled
+                : ballsBowled;
+            const runsToSave =
+              existingStat && !options.forceOverwrite && existingStat.ballsBowled > ballsBowled
+                ? existingStat.runsConceded
+                : bw.runs;
+            const wicketsToSave =
+              existingStat && !options.forceOverwrite && existingStat.ballsBowled > ballsBowled
+                ? existingStat.wickets
+                : bw.wickets;
+
+            await tx.playerMatchStat.upsert({
+              where: {
+                matchId_playerId_innings: {
+                  matchId: match.id,
+                  playerId: player.id,
+                  innings: innNum,
+                },
+              },
+              create: {
+                matchId: match.id,
+                playerId: player.id,
+                teamId: player.teamId,
+                innings: innNum,
+                ballsBowled: ballsToSave,
+                runsConceded: runsToSave,
+                wickets: wicketsToSave,
+                maidens: bw.maidens || 0,
+              },
+              update: {
+                ballsBowled: ballsToSave,
+                runsConceded: runsToSave,
+                wickets: wicketsToSave,
+                maidens: bw.maidens !== undefined ? bw.maidens : undefined,
               },
             });
           }

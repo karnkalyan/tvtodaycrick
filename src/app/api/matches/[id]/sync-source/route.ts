@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { fetchCricNepalLiveMatch, applyCricNepalMatchToDb } from "@/lib/cricnepal-live";
+import { fetchOnlineKhabarLiveMatch, getOnlineKhabarUrlForMatch } from "@/lib/onlinekhabar-live";
 import { ok } from "@/lib/api-response";
 import { handleApiError } from "@/lib/errors";
 
@@ -30,39 +31,60 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // empty body is fine
     }
 
-    // Determine CricNepal Source URL
+    // Determine Source URL (CricNepal or OnlineKhabar)
     let sourceUrl = typeof body?.sourceUrl === "string" ? body.sourceUrl.trim() : "";
     if (!sourceUrl && match.notes) {
-      const matchUrlLine = match.notes.match(/Source:\s*(https:\/\/[^\s]+cricnepal\.com\/match\/[^\s]+)/i);
+      const matchUrlLine = match.notes.match(/Source:\s*(https?:\/\/[^\s]+(?:cricnepal\.com|onlinekhabar\.com)\/[^\s]+)/i);
       if (matchUrlLine) {
         sourceUrl = matchUrlLine[1].trim();
       }
     }
 
-    // Default for Match 1 if not set
-    if (!sourceUrl) {
-      if (
-        (match.title.toLowerCase().includes("lumbini") && match.title.toLowerCase().includes("sudurpaschim")) ||
-        match.matchNumber === "Season3-M1" ||
-        match.matchNumber === "Match 1"
-      ) {
-        sourceUrl =
-          "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
+    // Fallback URLs
+    const matchNum = match.matchNumber || "";
+    const ordinal = Number(matchNum.match(/(\d+)$/)?.[1]);
+    const okFallbackUrl = getOnlineKhabarUrlForMatch(matchNum) || "";
+    let cnFallbackUrl = "";
+    if (
+      (match.title.toLowerCase().includes("lumbini") && match.title.toLowerCase().includes("sudurpaschim")) ||
+      match.matchNumber === "Season3-M1" ||
+      match.matchNumber === "Match 1" ||
+      ordinal === 1
+    ) {
+      cnFallbackUrl =
+        "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
+    }
+
+    let parsedData: any = null;
+    let usedUrl = sourceUrl || cnFallbackUrl || okFallbackUrl;
+
+    if (sourceUrl.includes("onlinekhabar.com")) {
+      parsedData = await fetchOnlineKhabarLiveMatch(sourceUrl);
+    } else if (sourceUrl.includes("cricnepal.com")) {
+      parsedData = await fetchCricNepalLiveMatch(sourceUrl);
+    } else {
+      // Try CricNepal first, fallback to OnlineKhabar
+      if (cnFallbackUrl) {
+        try {
+          parsedData = await fetchCricNepalLiveMatch(cnFallbackUrl);
+          usedUrl = cnFallbackUrl;
+        } catch {
+          // fallback
+        }
+      }
+      if (!parsedData && okFallbackUrl) {
+        try {
+          parsedData = await fetchOnlineKhabarLiveMatch(okFallbackUrl);
+          usedUrl = okFallbackUrl;
+        } catch {
+          // fallback
+        }
       }
     }
 
-    if (!sourceUrl) {
-      return NextResponse.json(
-        { error: "No CricNepal match URL found in match notes or request body" },
-        { status: 400 }
-      );
-    }
-
-    // Fetch live match payload from CricNepal
-    const parsedData = await fetchCricNepalLiveMatch(sourceUrl);
     if (!parsedData) {
       return NextResponse.json(
-        { error: `Could not parse live match details from ${sourceUrl}` },
+        { error: `Could not parse live match details from source (${usedUrl || "no source URL"})` },
         { status: 502 }
       );
     }

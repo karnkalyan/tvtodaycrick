@@ -4,7 +4,7 @@ import { api, jsonBody } from "@/lib/client-api";
 import { NPL_SEASONS, nplSeason } from "@/lib/npl-seasons";
 import type { NplSeason } from "@/types/npl";
 
-export type NplProvider = "nplt20league" | "cricnepal";
+export type NplProvider = "nplt20league" | "cricnepal" | "onlinekhabar";
 
 type SeasonContextValue = {
   year: string;
@@ -51,7 +51,7 @@ export function SeasonProvider({ children }: { children: React.ReactNode }) {
     else setAutoSync(false);
 
     const savedProvider = localStorage.getItem("npl-provider") as NplProvider | null;
-    if (savedProvider === "nplt20league" || savedProvider === "cricnepal") {
+    if (savedProvider === "nplt20league" || savedProvider === "cricnepal" || savedProvider === "onlinekhabar") {
       setProvider(savedProvider);
     } else {
       setProvider("cricnepal");

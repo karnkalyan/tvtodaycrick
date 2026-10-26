@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 import { nplSeason } from "../lib/npl-seasons";
 import { SECONDARY_SCHEDULE } from "../lib/npl-source";
 
-export type NplProvider = "nplt20league" | "cricnepal";
+export type NplProvider = "nplt20league" | "cricnepal" | "onlinekhabar";
 
 export interface NplSettingsResponse {
   season: string;
@@ -12,14 +12,17 @@ export interface NplSettingsResponse {
   secondaryUrl: string | null;
   nplt20Url: string;
   cricnepalUrl: string;
+  onlinekhabarUrl?: string;
   autoSync: boolean;
   autoSyncInterval: number; // in seconds
 }
 
 export const DEFAULT_NPLT20_URL = "https://nplt20league.com";
+export const DEFAULT_ONLINEKHABAR_URL = "https://www.onlinekhabar.com/cricket-tournament/npl-nepal-premier-league-2026";
 
 export function detectProvider(url?: string | null): NplProvider {
   if (!url) return "cricnepal";
+  if (url.includes("onlinekhabar.com")) return "onlinekhabar";
   if (url.includes("nplt20league.com")) return "nplt20league";
   return "cricnepal";
 }
@@ -39,6 +42,7 @@ export async function getSourceSettings(year: string): Promise<NplSettingsRespon
     secondaryUrl: saved ? saved.secondaryUrl : year === "2026" ? SECONDARY_SCHEDULE : null,
     nplt20Url: DEFAULT_NPLT20_URL,
     cricnepalUrl: config.sourceUrl,
+    onlinekhabarUrl: DEFAULT_ONLINEKHABAR_URL,
     autoSync: false,
     autoSyncInterval: 25,
   };
@@ -60,6 +64,10 @@ export async function saveSourceSettings(year: string, body: unknown): Promise<N
     if (!targetUrl || !targetUrl.includes("cricnepal.com")) {
       targetUrl = config.sourceUrl;
     }
+  } else if (chosenProvider === "onlinekhabar") {
+    if (!targetUrl || !targetUrl.includes("onlinekhabar.com")) {
+      targetUrl = DEFAULT_ONLINEKHABAR_URL;
+    }
   } else if (chosenProvider === "nplt20league") {
     targetUrl = DEFAULT_NPLT20_URL;
   } else {
@@ -76,6 +84,15 @@ export async function saveSourceSettings(year: string, body: unknown): Promise<N
       }
     } catch {
       targetUrl = config.sourceUrl;
+    }
+  } else if (chosenProvider === "onlinekhabar") {
+    try {
+      const input = new URL(targetUrl);
+      if (input.protocol !== "https:" || !input.hostname.includes("onlinekhabar.com")) {
+        targetUrl = DEFAULT_ONLINEKHABAR_URL;
+      }
+    } catch {
+      targetUrl = DEFAULT_ONLINEKHABAR_URL;
     }
   } else {
     targetUrl = DEFAULT_NPLT20_URL;
