@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Activity,
   CircleDot,
   Clock3,
   Gauge,
@@ -9,7 +8,6 @@ import {
   Radio,
   Shield,
   Sparkles,
-  Swords,
   Target,
   Trophy,
   UserRound,
@@ -64,6 +62,7 @@ type NplPlayer = {
 type NplTeam = {
   code: string;
   name: string;
+  slug: string;
   primaryColor: string;
   secondaryColor: string;
   logoUrl: string;
@@ -178,11 +177,22 @@ function rate(runs: number, overs: string) {
   return balls ? (runs * 6 / balls).toFixed(2) : "0.00";
 }
 
-function ImageWithFallback({ src, alt, className, fallback }: { src?: string; alt: string; className: string; fallback: React.ReactNode }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  if (!src || failed) return <div className={className}>{fallback}</div>;
-  return <img className={className} src={src} alt={alt} onError={() => setFailed(true)} />;
+function ImageWithFallback({ src, alt, className, fallback }: { src?: string | string[]; alt: string; className: string; fallback: React.ReactNode }) {
+  const sources = Array.isArray(src) ? src.filter(Boolean) : src ? [src] : [];
+  const sourceKey = sources.join("|");
+  const [sourceIndex, setSourceIndex] = useState(0);
+  useEffect(() => setSourceIndex(0), [sourceKey]);
+  if (!sources[sourceIndex]) return <div className={className}>{fallback}</div>;
+  return <img className={className} src={sources[sourceIndex]} alt={alt} onError={() => setSourceIndex((index) => index + 1)} />;
+}
+
+function playerImageSources(team: { slug: string }, player: NplPlayer | undefined, name?: string) {
+  const playerSlug = String(name || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return Array.from(new Set([
+    player?.imageUrl,
+    playerSlug ? `/images/teams/${team.slug}/players/${playerSlug}.webp` : undefined,
+    playerSlug ? `/images/teams/${team.slug}/players/${playerSlug}.png` : undefined,
+  ].filter((value): value is string => Boolean(value))));
 }
 
 export default function KashtrixOutput() {
@@ -326,12 +336,12 @@ export default function KashtrixOutput() {
   const teamA = {
     code: teamCodeA, name: state.match?.teamAName || dataA?.name || fallbackA.name,
     primary: dataA?.primaryColor || fallbackA.primary, secondary: dataA?.secondaryColor || fallbackA.secondary,
-    logo: dataA?.logoUrl || `/images/teams/${fallbackA.slug}/logo.png`, players: dataA?.players || [],
+    logo: dataA?.logoUrl || `/images/teams/${fallbackA.slug}/logo.png`, slug: dataA?.slug || fallbackA.slug, players: dataA?.players || [],
   };
   const teamB = {
     code: teamCodeB, name: state.match?.teamBName || dataB?.name || fallbackB.name,
     primary: dataB?.primaryColor || fallbackB.primary, secondary: dataB?.secondaryColor || fallbackB.secondary,
-    logo: dataB?.logoUrl || `/images/teams/${fallbackB.slug}/logo.png`, players: dataB?.players || [],
+    logo: dataB?.logoUrl || `/images/teams/${fallbackB.slug}/logo.png`, slug: dataB?.slug || fallbackB.slug, players: dataB?.players || [],
   };
   const findPlayer = (team: typeof teamA, name?: string) => team.players.find((player) => player.name === name || player.displayName.toUpperCase() === String(name || "").toUpperCase());
   const striker = findPlayer(teamA, state.live?.strikerName);
@@ -353,110 +363,105 @@ export default function KashtrixOutput() {
 
   return (
     <main className={styles.output} style={theme}>
-      <div className={styles.ambient} aria-hidden="true"><i /><i /><i /></div>
-      <div className={styles.frame}>
-        <header className={styles.header}>
-          <div className={styles.brandLockup}>
-            <div className={styles.brandMark}><Trophy size={28} strokeWidth={2.2} /></div>
-            <div><span>NEPAL PREMIER LEAGUE</span><strong>KASHTRIX / LIVE CENTRE</strong></div>
-          </div>
-          <div className={styles.matchIdentity}>
-            <span>{state.live?.matchLabel || "NEPAL PREMIER LEAGUE"}</span>
-            <strong>{state.live?.innings || "MATCH SCHEDULED"}</strong>
-          </div>
-          <div className={styles.liveState}>
-            <i className={connected ? styles.connected : undefined} />
-            <div><span>{connected ? "LIVE DATA" : "SYNCING"}</span><strong>ON AIR</strong></div>
-            <Radio size={24} />
-          </div>
-        </header>
+      <div className={styles.virtualSet} aria-hidden="true" />
+      <div className={styles.setShade} aria-hidden="true" />
+      <div className={styles.lightBeams} aria-hidden="true"><i /><i /><i /></div>
 
-        <section className={styles.heroScore}>
-          <div className={styles.teamPanel}>
-            <div className={styles.teamGlow} />
-            <ImageWithFallback src={teamA.logo} alt={`${teamA.name} crest`} className={styles.teamLogo} fallback={<Shield size={62} />} />
-            <div className={styles.teamCopy}><span>BATTING</span><strong>{teamA.name}</strong><b>{teamA.code}</b></div>
-          </div>
-          <div className={styles.scoreCore}>
-            <div className={styles.scoreCaption}><Activity size={18} /><span>LIVE SCORE</span></div>
-            <div className={styles.scoreValue}><strong>{runs}</strong><i>/</i><b>{wickets}</b></div>
-            <div className={styles.overs}><span>{overs}</span> OVERS</div>
-            <div className={styles.pulseLine}><i /><i /><i /><i /><i /></div>
-          </div>
-          <div className={`${styles.teamPanel} ${styles.teamPanelRight}`}>
-            <div className={styles.teamGlow} />
-            <div className={styles.teamCopy}><span>BOWLING</span><strong>{teamB.name}</strong><b>{teamB.code}</b></div>
-            <ImageWithFallback src={teamB.logo} alt={`${teamB.name} crest`} className={styles.teamLogo} fallback={<Shield size={62} />} />
-          </div>
-        </section>
+      <header className={styles.topBar}>
+        <div className={styles.brandLockup}>
+          <span className={styles.brandIcon}><Trophy size={25} /></span>
+          <div><small>NEPAL PREMIER LEAGUE</small><strong>KASHTRIX VIRTUAL ARENA</strong></div>
+        </div>
+        <div className={styles.matchIdentity}>
+          <span>{state.live?.matchLabel || "NEPAL PREMIER LEAGUE"}</span>
+          <strong>{state.live?.innings || "MATCH SCHEDULED"}</strong>
+        </div>
+        <div className={styles.liveState}>
+          <i className={connected ? styles.connected : undefined} />
+          <div><small>{connected ? "LIVE DATA" : "SYNCING"}</small><strong>ON AIR</strong></div>
+          <Radio size={21} />
+        </div>
+      </header>
 
-        <section className={styles.contentGrid}>
-          <div className={styles.battingColumn}>
-            <div className={styles.sectionHeading}><span><Swords size={17} /> AT THE CREASE</span><b>BATTERS</b></div>
-            <PlayerCard
-              featured name={state.live?.strikerName || "BATTER"} photo={striker?.imageUrl}
-              label="ON STRIKE" primary={state.live?.strikerRuns || "0"} secondary={`${state.live?.strikerBalls || "0"} BALLS`}
-              detail={striker?.role?.replace(/_/g, " ") || "BATTER"}
-            />
-            <PlayerCard
-              name={state.live?.nonStrikerName || "NON-STRIKER"} photo={nonStriker?.imageUrl}
-              label="NON-STRIKER" primary={state.live?.nonStrikerRuns || "0"} secondary={`${state.live?.nonStrikerBalls || "0"} BALLS`}
-              detail={nonStriker?.role?.replace(/_/g, " ") || "BATTER"}
-            />
-          </div>
+      <section className={styles.teamFlagLeft}>
+        <ImageWithFallback src={teamA.logo} alt={`${teamA.name} crest`} className={styles.flagLogo} fallback={<Shield size={50} />} />
+        <div><span>BATTING</span><strong>{teamA.name}</strong></div>
+      </section>
+      <section className={styles.teamFlagRight}>
+        <div><span>BOWLING</span><strong>{teamB.name}</strong></div>
+        <ImageWithFallback src={teamB.logo} alt={`${teamB.name} crest`} className={styles.flagLogo} fallback={<Shield size={50} />} />
+      </section>
 
-          <div className={styles.matchColumn}>
-            <div className={styles.metricRow}>
-              <Metric icon={<Gauge />} label="RUN RATE" value={rate(runs, overs)} />
-              <Metric icon={<Target />} label={target > 0 ? "TARGET" : "WICKETS IN HAND"} value={target > 0 ? String(target) : String(Math.max(0, 10 - wickets))} />
-              <Metric icon={<Zap />} label={required !== null ? "RUNS NEEDED" : "INNINGS"} value={required !== null ? String(required) : String(state.match?.inningsNumber || 1)} />
-            </div>
-            <div className={styles.thisOver}>
-              <div className={styles.overHead}><span>THIS OVER</span><b>DELIVERY TRACK</b></div>
-              <div className={styles.ballRail}>
-                {recent.slice(-8).map((ball, index) => <Ball key={`${ball}-${index}`} value={ball} index={index} />)}
-              </div>
-              <div className={styles.pitchStrip}><span /><i /><b /></div>
-            </div>
-            <div className={styles.requirement}>
-              <Target size={25} />
-              <div><span>MATCH EQUATION</span><strong>{state.live?.requirement || "MATCH SCHEDULED"}</strong></div>
-              <Sparkles size={22} />
-            </div>
-            <div className={styles.infoGrid}>
-              <Info icon={<MapPin />} label="VENUE" value={state.live?.venue || "TU INTERNATIONAL CRICKET GROUND"} />
-              <Info icon={<CircleDot />} label="TOSS" value={state.live?.tossText || "TOSS NOT YET RECORDED"} />
-            </div>
-          </div>
+      <section className={styles.scorePod}>
+        <div className={styles.scorePodTop}><span><CircleDot size={14} /> LIVE SCORE</span><b>{teamA.code}</b></div>
+        <div className={styles.scoreValue}><strong>{runs}</strong><i>/</i><b>{wickets}</b></div>
+        <div className={styles.overs}><strong>{overs}</strong><span>OVERS</span></div>
+        <div className={styles.scoreMetrics}>
+          <StatPill icon={<Gauge />} label="CRR" value={rate(runs, overs)} />
+          <StatPill icon={<Target />} label={target > 0 ? "TARGET" : "INN"} value={target > 0 ? String(target) : String(state.match?.inningsNumber || 1)} />
+          <StatPill icon={<Zap />} label={required !== null ? "NEED" : "IN HAND"} value={required !== null ? String(required) : String(Math.max(0, 10 - wickets))} />
+        </div>
+      </section>
 
-          <div className={styles.bowlingColumn}>
-            <div className={styles.sectionHeading}><span><CircleDot size={17} /> WITH THE BALL</span><b>BOWLER</b></div>
-            <div className={styles.bowlerCard}>
-              <div className={styles.bowlerHalo} />
-              <ImageWithFallback src={bowler?.imageUrl} alt={state.live?.bowlerName || "Bowler"} className={styles.bowlerPhoto} fallback={<UserRound size={78} />} />
-              <div className={styles.bowlerInfo}>
-                <span>CURRENT BOWLER</span>
-                <strong>{state.live?.bowlerName || "BOWLER"}</strong>
-                <small>{bowler?.role?.replace(/_/g, " ") || "BOWLER"}</small>
-              </div>
-              <div className={styles.bowlerFigures}>
-                <div><span>FIGURES</span><strong>{state.live?.bowlerFigures || "0/0"}</strong></div>
-                <div><span>OVERS</span><strong>{state.live?.bowlerOvers || "0.0"}</strong></div>
-              </div>
-            </div>
-            <div className={styles.rateCard}>
-              <div><span>MATCH PULSE</span><strong>{state.live?.rateText || `CRR ${rate(runs, overs)}`}</strong></div>
-              <div className={styles.wave}><i /><i /><i /><i /><i /><i /><i /></div>
-            </div>
+      <section className={`${styles.heroPlayer} ${styles.strikerStage}`}>
+        <div className={styles.playerAura} />
+        <ImageWithFallback src={playerImageSources(teamA, striker, state.live?.strikerName)} alt={state.live?.strikerName || "Striker"} className={styles.heroPlayerImage} fallback={<div className={styles.heroFallback}><span>{initials(state.live?.strikerName)}</span><UserRound size={82} /></div>} />
+        <div className={styles.playerPlate}>
+          <div className={styles.roleTag}><Zap size={13} fill="currentColor" /> ON STRIKE</div>
+          <strong>{state.live?.strikerName || "BATTER"}</strong>
+          <small>{striker?.role?.replace(/_/g, " ") || "BATTER"}</small>
+          <div className={styles.heroStats}>
+            <b>{state.live?.strikerRuns || "0"}<span>RUNS</span></b>
+            <b>{state.live?.strikerBalls || "0"}<span>BALLS</span></b>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <footer className={styles.footer}>
-          <div><Clock3 size={17} /><span>LIVE FROM KIRTIPUR</span></div>
-          <div className={styles.ticker}><i />{state.live?.requirement || `${teamA.name} vs ${teamB.name}`}<i /></div>
-          <div><span>NPL 2026</span><Shield size={17} /></div>
-        </footer>
+      <section className={`${styles.heroPlayer} ${styles.bowlerStage}`}>
+        <div className={styles.playerAura} />
+        <ImageWithFallback src={playerImageSources(teamB, bowler, state.live?.bowlerName)} alt={state.live?.bowlerName || "Bowler"} className={styles.heroPlayerImage} fallback={<div className={styles.heroFallback}><span>{initials(state.live?.bowlerName)}</span><UserRound size={82} /></div>} />
+        <div className={styles.playerPlate}>
+          <div className={styles.roleTag}><CircleDot size={13} /> CURRENT BOWLER</div>
+          <strong>{state.live?.bowlerName || "BOWLER"}</strong>
+          <small>{bowler?.role?.replace(/_/g, " ") || "BOWLER"}</small>
+          <div className={styles.heroStats}>
+            <b>{state.live?.bowlerFigures || "0/0"}<span>FIGURES</span></b>
+            <b>{state.live?.bowlerOvers || "0.0"}<span>OVERS</span></b>
+          </div>
+        </div>
+      </section>
+
+      <section className={styles.nonStrikerDock}>
+        <div className={styles.miniPhotoWrap}>
+          <ImageWithFallback src={playerImageSources(teamA, nonStriker, state.live?.nonStrikerName)} alt={state.live?.nonStrikerName || "Non-striker"} className={styles.miniPhoto} fallback={<span>{initials(state.live?.nonStrikerName)}</span>} />
+        </div>
+        <div className={styles.miniCopy}><span>NON-STRIKER</span><strong>{state.live?.nonStrikerName || "NON-STRIKER"}</strong></div>
+        <div className={styles.miniScore}><b>{state.live?.nonStrikerRuns || "0"}</b><span>{state.live?.nonStrikerBalls || "0"} BALLS</span></div>
+      </section>
+
+      <div className={styles.floorMotion} aria-hidden="true">
+        <div className={styles.floorOrbit}><i /></div>
+        <div className={styles.deliveryBall} />
+        <div className={styles.floorWickets}><i /><i /><i /><b /><b /></div>
+        <div className={styles.pitchPulse}><i /><i /><i /></div>
       </div>
+
+      <section className={styles.lowerDeck}>
+        <div className={styles.equation}>
+          <Target size={21} /><div><span>MATCH EQUATION</span><strong>{state.live?.requirement || "MATCH SCHEDULED"}</strong></div><Sparkles size={19} />
+        </div>
+        <div className={styles.overTrack}>
+          <span>THIS OVER</span>
+          <div className={styles.ballRail}>{recent.slice(-8).map((ball, index) => <Ball key={`${ball}-${index}`} value={ball} index={index} />)}</div>
+        </div>
+        <div className={styles.matchPulse}><span>MATCH PULSE</span><strong>{state.live?.rateText || `CRR ${rate(runs, overs)}`}</strong><div className={styles.wave}><i /><i /><i /><i /><i /></div></div>
+      </section>
+
+      <footer className={styles.footer}>
+        <div><MapPin size={15} /><span>{state.live?.venue || "TU INTERNATIONAL CRICKET GROUND"}</span></div>
+        <div><Clock3 size={15} /><span>{state.live?.tossText || "TOSS NOT YET RECORDED"}</span></div>
+        <div><Shield size={15} /><span>NPL 2026</span></div>
+      </footer>
 
       {event && presentation && (
         <section key={event.key} className={`${styles.stinger} ${styles[presentation.className]}`} aria-live="assertive">
@@ -481,25 +486,8 @@ export default function KashtrixOutput() {
   );
 }
 
-function PlayerCard({ name, photo, label, primary, secondary, detail, featured = false }: { name: string; photo?: string; label: string; primary: string; secondary: string; detail: string; featured?: boolean }) {
-  return (
-    <article className={`${styles.playerCard} ${featured ? styles.featuredPlayer : ""}`}>
-      <div className={styles.playerImageWrap}>
-        <ImageWithFallback src={photo} alt={name} className={styles.playerPhoto} fallback={<span>{initials(name)}</span>} />
-        {featured && <div className={styles.strikeBadge}><Zap size={13} fill="currentColor" /> STRIKE</div>}
-      </div>
-      <div className={styles.playerInfo}><span>{label}</span><strong>{name}</strong><small>{detail}</small></div>
-      <div className={styles.playerScore}><strong>{primary}</strong><span>{secondary}</span></div>
-    </article>
-  );
-}
-
-function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return <div className={styles.metric}><span>{icon}</span><div><small>{label}</small><strong>{value}</strong></div></div>;
-}
-
-function Info({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return <div className={styles.info}><span>{icon}</span><div><small>{label}</small><strong>{value}</strong></div></div>;
+function StatPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return <div className={styles.statPill}><span>{icon}</span><small>{label}</small><strong>{value}</strong></div>;
 }
 
 function Ball({ value, index }: { value: string; index: number }) {
