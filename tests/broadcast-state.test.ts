@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { mergeBroadcastState } from "../src/lib/broadcast-state";
+import { mergeBroadcastState, buildBroadcastStateFromMatch } from "../src/lib/broadcast-state";
 
 test("partial broadcast writes preserve state owned by other clients", () => {
   const current = {
@@ -169,6 +169,71 @@ test("buildBroadcastStateFromMatch accurately reflects completed match score, FO
   assert.equal(fow[1][0], "2/39");
   assert.equal(fow[2][0], "3/57");
 });
+
+test("buildBroadcastStateFromMatch preserves all-ball events without 6-ball cutoff and populates bowler extras", () => {
+  const mockMatch = {
+    id: 191,
+    title: "Biratnagar Kings vs Chitwan Rhinos",
+    matchNumber: "Season3-M2",
+    status: "LIVE",
+    homeTeamId: 1,
+    awayTeamId: 2,
+    homeTeam: { id: 1, name: "Biratnagar Kings", shortName: "BIK" },
+    awayTeam: { id: 2, name: "Chitwan Rhinos", shortName: "CHR" },
+    innings: [
+      { id: 1, inningsNumber: 1, teamId: 2, runs: 45, wickets: 2, balls: 28, extras: 5, status: "LIVE" },
+    ],
+  };
+
+  const parsedLive = {
+    // 8 deliveries in the over due to 2 extras
+    recentDeliveries: ["1", "WD", "0", "NB", "4", "1", "2", "0"],
+    liveSummary: {
+      currentBowler: {
+        name: "Abinash Bohara",
+        wickets: 1,
+        runs: 18,
+        overs: "2.0",
+        noBalls: 1,
+        wides: 1,
+      },
+    },
+  };
+
+  const state = buildBroadcastStateFromMatch(mockMatch, parsedLive);
+  const scoreObj = state.score as any;
+  const liveObj = state.live as any;
+  const matchObj = state.match as any;
+
+  // Recent deliveries should NOT be sliced to 6
+  assert.equal(scoreObj.recent.length, 8);
+  assert.deepEqual(scoreObj.recent, ["1", "WD", "0", "NB", "4", "1", "2", "0"]);
+
+  // Bowler extras should be populated
+  assert.equal(liveObj.bowlerNoBalls, "1");
+  assert.equal(liveObj.bowlerWides, "1");
+
+  // Separate teams
+  assert.equal(matchObj.teamA, "CHR");
+  assert.equal(matchObj.teamB, "BIK");
+  assert.notEqual(matchObj.teamA, matchObj.teamB);
+});
+
+test("graphics templates and app.js include bowler no-balls and wides bindings", () => {
+  const outputPage = readFileSync(new URL("../src/app/broadcast/output/page.tsx", import.meta.url), "utf8");
+  const appJs = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
+
+  assert.match(outputPage, /id="masterBowlerNoBalls"/);
+  assert.match(outputPage, /id="masterBowlerWides"/);
+  assert.match(outputPage, /id="anchorMasterBowlerNoBalls"/);
+  assert.match(outputPage, /id="anchorMasterBowlerWides"/);
+
+  assert.match(appJs, /masterBowlerNoBalls:\s*bNoBalls/);
+  assert.match(appJs, /masterBowlerWides:\s*bWides/);
+  assert.match(appJs, /anchorMasterBowlerNoBalls:\s*bNoBalls/);
+  assert.match(appJs, /anchorMasterBowlerWides:\s*bWides/);
+});
+
 
 
 

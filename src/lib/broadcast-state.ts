@@ -122,8 +122,14 @@ export function buildBroadcastStateFromMatch(
     }
   }
 
-  const battingBrand = getFranchiseBrand(battingTeam.name);
-  const bowlingBrand = getFranchiseBrand(bowlingTeam.name);
+  let battingBrand = getFranchiseBrand(battingTeam.name);
+  let bowlingBrand = getFranchiseBrand(bowlingTeam.name);
+  if (battingBrand.code === bowlingBrand.code || (battingTeam.id && bowlingTeam.id && battingTeam.id === bowlingTeam.id)) {
+    battingTeam = match.homeTeam || battingTeam;
+    bowlingTeam = match.awayTeam || bowlingTeam;
+    battingBrand = getFranchiseBrand(battingTeam.name);
+    bowlingBrand = getFranchiseBrand(bowlingTeam.name);
+  }
 
   const bOvers = Number(activeInn.balls) || 0;
   const ovStr = `${Math.floor(bOvers / 6)}.${bOvers % 6}`;
@@ -271,15 +277,30 @@ export function buildBroadcastStateFromMatch(
       ];
     });
 
-  // Recent deliveries
+  // Recent deliveries - preserve all ball events in this over
   let recent: string[] = ["-", "-", "-", "-", "-", "-"];
   if (parsedLive?.recentDeliveries?.length) {
-    recent = parsedLive.recentDeliveries.slice(-6);
+    recent = [...parsedLive.recentDeliveries];
   } else if (parsedLive?.oversByInnings?.[activeInningsNumber]?.[0]?.balls?.length) {
-    recent = parsedLive.oversByInnings[activeInningsNumber][0].balls.slice(-6);
+    recent = [...parsedLive.oversByInnings[activeInningsNumber][0].balls];
   } else if (bOvers > 0) {
     const ballsInOver = bOvers % 6 || 6;
     recent = ["0", "1", "0", "1", "4", "W"].slice(0, ballsInOver);
+  }
+
+  // Bowler extras (wides and no balls)
+  let bowlerNoBalls = 0;
+  let bowlerWides = 0;
+  if (parsedLive?.liveSummary?.currentBowler) {
+    const cb = parsedLive.liveSummary.currentBowler;
+    bowlerNoBalls = Number(cb.noBalls) || 0;
+    bowlerWides = Number(cb.wides) || 0;
+  }
+  if (Array.isArray(recent) && recent.length) {
+    const nbInRecent = recent.filter((b) => /NB/i.test(b)).length;
+    const wdInRecent = recent.filter((b) => /WD/i.test(b)).length;
+    if (nbInRecent > bowlerNoBalls) bowlerNoBalls = nbInRecent;
+    if (wdInRecent > bowlerWides) bowlerWides = wdInRecent;
   }
 
   return {
@@ -309,6 +330,8 @@ export function buildBroadcastStateFromMatch(
       bowlerName,
       bowlerFigures,
       bowlerOvers,
+      bowlerNoBalls: String(bowlerNoBalls),
+      bowlerWides: String(bowlerWides),
       requirement,
       matchLabel: `${match.title} · MATCH ${match.matchNumber || "01"}`,
       venue: match.venue || "TU INTERNATIONAL CRICKET GROUND, KIRTIPUR",

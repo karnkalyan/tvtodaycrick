@@ -713,7 +713,7 @@ async function persist(data: NplSeason, full: boolean) {
       for (const f of data.fixtures) {
         const homeTeamId = teamIdMap.get(f.home);
         const awayTeamId = teamIdMap.get(f.away);
-        if (!homeTeamId || !awayTeamId || f.status === "UNKNOWN") continue;
+        if (!homeTeamId || !awayTeamId || homeTeamId === awayTeamId || f.status === "UNKNOWN") continue;
 
         const matchNumber = f.number;
         const ordinal = Number(matchNumber.match(/M(\d+)$/)?.[1]);

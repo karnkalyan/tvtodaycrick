@@ -369,7 +369,14 @@
   }
 
   function renderTeams(){
-    const a=team(state.match.teamA), b=team(state.match.teamB);
+    let a=team(state.match.teamA), b=team(state.match.teamB);
+    const codeA = normalizeCode(state.match.teamA);
+    const codeB = normalizeCode(state.match.teamB);
+    if (codeA === codeB) {
+      const allCodes = ['LUL', 'SPR', 'KAG', 'JAB', 'CHR', 'KAY', 'POA', 'BIK'];
+      const altCode = allCodes.find(c => c !== codeA) || 'SPR';
+      b = team(altCode);
+    }
     const map={teamAName:a.name,teamBName:b.name,matchupAName:a.name,matchupBName:b.name,xiTeamName:a.name,xiTeamNameBig:a.name,resultAName:a.name,resultBName:b.name};
     Object.entries(map).forEach(([id,v])=>setText(id,v));
 
@@ -604,11 +611,38 @@
   function renderRecent(){
     const isScheduled = (state.score.overs === '0.0' || state.score.overs === '0' || !state.score.overs) && (Number(state.score.runs) === 0 || !state.score.runs) || (state.live?.innings && state.live.innings.toUpperCase().includes('SCHEDULED'));
     const isCompleted = (state.live?.innings && state.live.innings.toUpperCase().includes('COMPLETED')) || (state.live?.rateText && state.live.rateText.toUpperCase().includes('FINAL RESULT'));
-    const balls = isScheduled ? ['-', '-', '-', '-', '-', '-'] : (state.score.recent || []);
-    const html=balls.map(v=>`<i class="${v==='4'?'four':v==='6'?'six':v==='W'?'wicket':/WD|NB/.test(v)?'extra':''}">${v}</i>`).join('');
-    const el1=$('#recentBalls'); if(el1)el1.innerHTML=html;
-    const el2=$('#masterRecentBalls'); if(el2)el2.innerHTML=html;
-    const el3=$('#anchorMasterRecentBalls'); if(el3)el3.innerHTML=html;
+    
+    // Preserve ALL ball events in the over (no hard 6-ball cutoff)
+    const rawBalls = isScheduled ? ['-', '-', '-', '-', '-', '-'] : (state.score.recent || []);
+    let balls = [...rawBalls];
+
+    // If over is in progress, calculate legal balls bowled and pad remaining legal deliveries with '-'
+    let legalBallsInOver = 0;
+    if (!isScheduled && !isCompleted) {
+      legalBallsInOver = balls.filter(b => b !== '-' && !/WD|NB/i.test(b)).length;
+      const remainingLegal = Math.max(0, 6 - legalBallsInOver);
+      for (let i = 0; i < remainingLegal; i++) {
+        balls.push('-');
+      }
+    } else {
+      legalBallsInOver = balls.filter(b => b !== '-' && !/WD|NB/i.test(b)).length;
+    }
+
+    const getBallClass = (v) => {
+      if (v === '-') return 'pending';
+      if (v === '4') return 'four';
+      if (v === '6') return 'six';
+      if (v === 'W' || (v.toUpperCase().includes('W') && !v.toUpperCase().includes('WD'))) return 'wicket';
+      if (/NB/i.test(v)) return 'noball extra';
+      if (/WD/i.test(v)) return 'wide extra';
+      if (/LB|B|EX/i.test(v)) return 'extra';
+      return '';
+    };
+
+    const html = balls.map(v => `<i class="${getBallClass(v)}">${v}</i>`).join('');
+    const el1 = $('#recentBalls'); if(el1) el1.innerHTML = html;
+    const el2 = $('#masterRecentBalls'); if(el2) el2.innerHTML = html;
+    const el3 = $('#anchorMasterRecentBalls'); if(el3) el3.innerHTML = html;
     const ovRem = $('#masterOverStatus');
     if (ovRem) {
       if (isScheduled) {
@@ -616,7 +650,6 @@
       } else if (isCompleted) {
         ovRem.textContent = 'MATCH COMPLETED';
       } else {
-        const legalBallsInOver = balls.filter(b => b !== '-' && !/WD|NB/.test(b)).length;
         ovRem.textContent = `${Math.max(0, 6 - legalBallsInOver)} BALLS REMAINING`;
       }
     }
@@ -741,6 +774,12 @@
       setText('phaseDeath', curOv <= 15 ? 'YET TO BAT' : `${deathRuns}/${deathWkts} (${deathOv} OV)`);
     }
 
+    const bMaidens = String(l.bowlerMaidens || '0');
+    const bDots = String(l.bowlerDots || Math.max(0, bBallsTot - Math.floor(bRuns / 1.5)));
+    const bBoundaries = String(l.bowlerBoundaries || Math.max(0, Math.floor(bRuns / 7)));
+    const bNoBalls = String(l.bowlerNoBalls !== undefined && l.bowlerNoBalls !== null ? l.bowlerNoBalls : (state.score.recent || []).filter(b => /NB/i.test(b)).length);
+    const bWides = String(l.bowlerWides !== undefined && l.bowlerWides !== null ? l.bowlerWides : (state.score.recent || []).filter(b => /WD/i.test(b)).length);
+
     const map={
       inningsText:l.innings,rateText:l.rateText,strikerName:l.strikerName,strikerRuns:l.strikerRuns,strikerBalls:l.strikerBalls,nonStrikerName:l.nonStrikerName,nonStrikerRuns:l.nonStrikerRuns,nonStrikerBalls:l.nonStrikerBalls,bowlerName:l.bowlerName,bowlerFigures:l.bowlerFigures,bowlerOvers:l.bowlerOvers,requirement:l.requirement,matchLabel:l.matchLabel,venueLabel:l.venue,
       compactStrikerName:l.strikerName,compactStrikerRuns:l.strikerRuns,compactStrikerBalls:l.strikerBalls,compactBowlerName:l.bowlerName,compactBowlerFigures:l.bowlerFigures,compactBowlerOvers:l.bowlerOvers,compactOvers:s.overs,compactScore:`${s.runs}/${s.wickets}`,
@@ -753,7 +792,7 @@
       masterNonStrikerName:l.nonStrikerName,masterNonStrikerRuns:`${nsRuns}*`,masterNonStrikerBalls:nsBalls,masterNonStrikerSR:nsSR,
       masterNonStrikerFours:Math.max(0, Math.floor(nsRuns / 8)),masterNonStrikerSixes:Math.max(0, Math.floor(nsRuns / 22)),masterNonStrikerDots:Math.max(0, nsBalls - Math.floor(nsRuns / 1.8)),
       masterBowlerName:l.bowlerName,masterBowlerFigures:l.bowlerFigures,masterBowlerOvers:l.bowlerOvers,masterBowlerEcon:bEcon,
-      masterBowlerBoundaries:Math.max(0, Math.floor(bRuns / 7)),masterBowlerDots:Math.max(0, bBallsTot - Math.floor(bRuns / 1.5)),
+      masterBowlerMaidens:bMaidens,masterBowlerDots:bDots,masterBowlerBoundaries:bBoundaries,masterBowlerNoBalls:bNoBalls,masterBowlerWides:bWides,
       masterPartnershipLabel:partnershipLabel,masterPartnershipRuns:`${partRuns} RUNS`,masterPartnershipBalls:partBalls,masterPartnershipRate:partRate,
       masterWinProbAText:`${a.short} ${winProbA}%`,masterWinProbBText:`${b.short} ${winProbB}%`,
       masterTossText:state.live.tossText || `${b.name} WON TOSS & ELECTED TO BOWL`,
@@ -767,7 +806,7 @@
       anchorMasterNonStrikerName:l.nonStrikerName,anchorMasterNonStrikerRuns:`${nsRuns}*`,anchorMasterNonStrikerBalls:nsBalls,anchorMasterNonStrikerSR:nsSR,
       anchorMasterNonStrikerFours:Math.max(0, Math.floor(nsRuns / 8)),anchorMasterNonStrikerSixes:Math.max(0, Math.floor(nsRuns / 22)),
       anchorMasterBowlerName:l.bowlerName,anchorMasterBowlerFigures:l.bowlerFigures,anchorMasterBowlerOvers:l.bowlerOvers,anchorMasterBowlerEcon:bEcon,
-      anchorMasterBowlerMaidens:'0',anchorMasterBowlerDots:Math.max(0, bBallsTot - Math.floor(bRuns / 1.5)),
+      anchorMasterBowlerMaidens:bMaidens,anchorMasterBowlerDots:bDots,anchorMasterBowlerNoBalls:bNoBalls,anchorMasterBowlerWides:bWides,
       anchorMasterBowlerStyle:b.name.includes('ROYALS') ? 'RIGHT-ARM FAST MEDIUM' : 'LEFT-ARM ORTHODOX SPIN',
       anchorMasterPartnershipLabel:partnershipLabel,anchorMasterPartnershipRuns:`${partRuns} RUNS`,anchorMasterPartnershipBalls:`${partBalls} BALLS`,anchorMasterPartnershipRate:partRate,
       anchorMasterTossText:state.live.tossText || `${b.name} WON TOSS & ELECTED TO BOWL`,
@@ -1503,7 +1542,13 @@
     const previous = deepClone(state);
     state.score.runs += r;
     if (wicket) state.score.wickets = Math.min(10, state.score.wickets + 1);
-    state.score.recent = [...state.score.recent, v].slice(-6);
+    state.score.recent = [...(state.score.recent || []), v];
+    if (/WD/i.test(v)) {
+      state.live.bowlerWides = String((Number(state.live.bowlerWides) || 0) + 1);
+    }
+    if (/NB/i.test(v)) {
+      state.live.bowlerNoBalls = String((Number(state.live.bowlerNoBalls) || 0) + 1);
+    }
 
     // Update bowler figures: in cricket, leg byes and byes are not charged to bowler's runs conceded
     const bowlerRuns = isExtra ? 0 : r;

@@ -2402,6 +2402,7 @@ body{font-family:Inter,Arial,"Helvetica Neue",sans-serif;text-rendering:geometri
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 .master-recent-balls i {
   font-style: normal;
@@ -2417,6 +2418,12 @@ body{font-family:Inter,Arial,"Helvetica Neue",sans-serif;text-rendering:geometri
   color: #f8fafc;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
   transition: transform 0.2s;
+}
+.master-recent-balls i.pending {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.35);
+  box-shadow: none;
 }
 .master-recent-balls i.four {
   background: linear-gradient(135deg, #1d4ed8, #0284c7);
@@ -2443,6 +2450,18 @@ body{font-family:Inter,Arial,"Helvetica Neue",sans-serif;text-rendering:geometri
   background: #78350f;
   border-color: #f59e0b;
   color: #fef08a;
+}
+.master-recent-balls i.noball {
+  background: linear-gradient(135deg, #c2410c, #ea580c);
+  border-color: #fb923c;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(251, 146, 60, 0.6);
+}
+.master-recent-balls i.wide {
+  background: linear-gradient(135deg, #854d0e, #ca8a04);
+  border-color: #facc15;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.5);
 }
 .master-toss-box {
   margin-top: 10px;

@@ -524,10 +524,11 @@ export async function applyCricNepalMatchToDb(
       }
 
       // 3. Reconcile Innings
+      let inn1BattingTeamId: number | null = null;
       for (const inn of data.innings) {
         // Find batting team ID
         let battingTeamId = match.homeTeamId;
-        const bName = inn.battingTeamName.toLowerCase();
+        const bName = (inn.battingTeamName || "").toLowerCase();
         if (
           match.awayTeam.name.toLowerCase() === bName ||
           match.awayTeam.shortName.toLowerCase() === bName ||
@@ -535,6 +536,15 @@ export async function applyCricNepalMatchToDb(
           bName.includes(match.awayTeam.shortName.toLowerCase())
         ) {
           battingTeamId = match.awayTeamId;
+        }
+
+        // Strictly enforce that Innings 1 and Innings 2 have opposing teams
+        if (inn.inningsNumber === 1) {
+          inn1BattingTeamId = battingTeamId;
+        } else if (inn.inningsNumber === 2 && inn1BattingTeamId) {
+          if (battingTeamId === inn1BattingTeamId) {
+            battingTeamId = inn1BattingTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+          }
         }
 
         const existingInn = match.innings.find((i) => i.inningsNumber === inn.inningsNumber);
@@ -583,19 +593,77 @@ export async function applyCricNepalMatchToDb(
         });
       }
 
-      // 4. Reconcile Live Batters and Bowler (without altering images/logos)
+      // Shared player registry for auto-syncing missing players
+      const homeTeamId = match.homeTeamId;
+      const awayTeamId = match.awayTeamId;
+      const allPlayers = [...match.homeTeam.players, ...match.awayTeam.players];
+      const activeBattingTeamId = (data.currentInningsNumber === 2 && inn1BattingTeamId)
+        ? (inn1BattingTeamId === homeTeamId ? awayTeamId : homeTeamId)
+        : (inn1BattingTeamId || homeTeamId);
+      const activeBowlingTeamId = activeBattingTeamId === homeTeamId ? awayTeamId : homeTeamId;
+
+      async function getOrCreatePlayer(
+        name: string,
+        preferredTeamId: number,
+        role: "BATSMAN" | "BOWLER" | "ALL_ROUNDER" | "WICKET_KEEPER" = "BATSMAN"
+      ) {
+        if (!name || !name.trim()) return null;
+        const cleanName = name.trim();
+        let p = allPlayers.find(
+          (item) =>
+            item.displayName.trim().toLowerCase() === cleanName.toLowerCase() ||
+            item.displayName.toLowerCase().includes(cleanName.toLowerCase()) ||
+            cleanName.toLowerCase().includes(item.displayName.toLowerCase())
+        );
+        if (p) return p;
+
+        const dbPlayer = await tx.player.findFirst({
+          where: {
+            displayName: { equals: cleanName },
+            teamId: { in: [homeTeamId, awayTeamId] },
+          },
+        });
+        if (dbPlayer) {
+          allPlayers.push(dbPlayer as any);
+          return dbPlayer as any;
+        }
+
+        const parts = cleanName.split(" ");
+        const firstName = parts[0] || cleanName;
+        const lastName = parts.slice(1).join(" ") || "";
+        try {
+          const created = await tx.player.create({
+            data: {
+              teamId: preferredTeamId,
+              firstName,
+              lastName,
+              displayName: cleanName,
+              role,
+              nationality: "Nepal",
+              isActive: true,
+            },
+          });
+          allPlayers.push(created as any);
+          return created as any;
+        } catch {
+          const fallback = await tx.player.findFirst({
+            where: { teamId: preferredTeamId, displayName: cleanName },
+          });
+          if (fallback) {
+            allPlayers.push(fallback as any);
+            return fallback as any;
+          }
+          return null;
+        }
+      }
+
+      // 4. Reconcile Live Batters and Bowler (auto-creating missing players)
       if (data.liveSummary) {
         const currentInningsNum = data.currentInningsNumber || 1;
-        const allPlayers = [...match.homeTeam.players, ...match.awayTeam.players];
 
         // Batters
         for (const batter of data.liveSummary.currentBatters) {
-          const player = allPlayers.find(
-            (p) =>
-              p.displayName.trim().toLowerCase() === batter.name.trim().toLowerCase() ||
-              p.displayName.toLowerCase().includes(batter.name.toLowerCase()) ||
-              batter.name.toLowerCase().includes(p.displayName.toLowerCase())
-          );
+          const player = await getOrCreatePlayer(batter.name, activeBattingTeamId, "BATSMAN");
 
           if (player) {
             const existingStat = await tx.playerMatchStat.findUnique({
@@ -648,12 +716,7 @@ export async function applyCricNepalMatchToDb(
         // Bowler
         if (data.liveSummary.currentBowler) {
           const bowler = data.liveSummary.currentBowler;
-          const player = allPlayers.find(
-            (p) =>
-              p.displayName.trim().toLowerCase() === bowler.name.trim().toLowerCase() ||
-              p.displayName.toLowerCase().includes(bowler.name.toLowerCase()) ||
-              bowler.name.toLowerCase().includes(p.displayName.toLowerCase())
-          );
+          const player = await getOrCreatePlayer(bowler.name, activeBowlingTeamId, "BOWLER");
 
           if (player) {
             const ballsBowled = oversStringToBalls(bowler.overs);
@@ -711,14 +774,27 @@ export async function applyCricNepalMatchToDb(
 
       // 5. Reconcile Full Innings Scorecard (Batters and Bowlers) if available
       if (Array.isArray(data.playerPerformances) && data.playerPerformances.length > 0) {
-        const allPlayers = [...match.homeTeam.players, ...match.awayTeam.players];
         for (const perf of data.playerPerformances) {
           const innNum = perf.innings || 1;
-          const player = allPlayers.find(
-            (p) =>
-              p.displayName.trim().toLowerCase() === perf.name.trim().toLowerCase() ||
-              p.displayName.toLowerCase().includes(perf.name.toLowerCase()) ||
-              perf.name.toLowerCase().includes(p.displayName.toLowerCase())
+          const innBattingTeamId = (innNum === 2 && inn1BattingTeamId)
+            ? (inn1BattingTeamId === homeTeamId ? awayTeamId : homeTeamId)
+            : (inn1BattingTeamId || homeTeamId);
+          const innBowlingTeamId = innBattingTeamId === homeTeamId ? awayTeamId : homeTeamId;
+
+          let targetTeamId = perf.type === "BATSMAN" ? innBattingTeamId : innBowlingTeamId;
+          if (perf.teamName) {
+            const tn = perf.teamName.toLowerCase();
+            if (match.awayTeam.name.toLowerCase().includes(tn) || tn.includes(match.awayTeam.shortName.toLowerCase())) {
+              targetTeamId = awayTeamId;
+            } else if (match.homeTeam.name.toLowerCase().includes(tn) || tn.includes(match.homeTeam.shortName.toLowerCase())) {
+              targetTeamId = homeTeamId;
+            }
+          }
+
+          const player = await getOrCreatePlayer(
+            perf.name,
+            targetTeamId,
+            perf.type === "BOWLER" ? "BOWLER" : "BATSMAN"
           );
           if (!player) continue;
 

@@ -32,7 +32,7 @@ function updateRecentDeliveries(actionName: string) {
   const ballsInOver = Number(String(latestState.score.overs || "0.0").split(".")[1]) || 0;
   latestState.score.recent = delivery.legal && ballsInOver === 5
     ? []
-    : [...current, delivery.token].slice(-6);
+    : [...current, delivery.token];
 }
 
 async function initDbState() {

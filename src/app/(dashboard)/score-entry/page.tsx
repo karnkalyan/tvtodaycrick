@@ -108,9 +108,15 @@ const toInn = (match: Match, n: number): InnForm => {
         : match.homeTeamId
     : match.homeTeamId;
   const firstBattingTeamId = match.innings?.find((x) => x.inningsNumber === 1)?.teamId || tossBattingTeamId;
-  const teamId = i?.teamId || (n === 1
-    ? firstBattingTeamId
-    : firstBattingTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId);
+  const opposingTeamId = firstBattingTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+
+  let teamId: number;
+  if (n === 1) {
+    teamId = i?.teamId || firstBattingTeamId;
+  } else {
+    teamId = (i?.teamId && i.teamId !== firstBattingTeamId) ? i.teamId : opposingTeamId;
+  }
+
   return {
     teamId: String(teamId),
     runs: String(i?.runs ?? 0),
@@ -1197,10 +1203,10 @@ export default function ScoreEntryPage() {
   }
 
   // The hero follows batting order, not the fixture's home/away order.
-  const firstInningsTeam = match && inn1?.teamId === String(match.homeTeamId) ? match.homeTeam : match?.awayTeam;
-  const secondInningsTeam = match && inn2?.teamId === String(match.homeTeamId) ? match.homeTeam : match?.awayTeam;
-  const activeForm = activeInnings === 1 ? inn1 : inn2;
-  const activeBattingTeam = match && activeForm?.teamId === String(match.awayTeamId) ? match.awayTeam : match?.homeTeam;
+  // Strictly enforce two distinct teams so both sides are guaranteed to show separate franchises.
+  const firstInningsTeam = match && inn1?.teamId === String(match.awayTeamId) ? match.awayTeam : match?.homeTeam;
+  const secondInningsTeam = match && firstInningsTeam?.id === match.homeTeamId ? match.awayTeam : match?.homeTeam;
+  const activeBattingTeam = activeInnings === 2 ? secondInningsTeam : firstInningsTeam;
   const activeBowlingTeam = match && activeBattingTeam?.id === match.homeTeamId ? match.awayTeam : match?.homeTeam;
 
   return (

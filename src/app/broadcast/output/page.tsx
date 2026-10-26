@@ -610,6 +610,8 @@ export default function BroadcastOutputPage() {
                       <span>MAIDENS: <b id="masterBowlerMaidens">0</b></span>
                       <span>DOTS: <b id="masterBowlerDots">0</b></span>
                       <span>BOUNDARIES: <b id="masterBowlerBoundaries">0</b></span>
+                      <span>NO BALLS: <b id="masterBowlerNoBalls">0</b></span>
+                      <span>WIDES: <b id="masterBowlerWides">0</b></span>
                     </div>
                   </div>
                 </div>
@@ -873,6 +875,8 @@ export default function BroadcastOutputPage() {
                     <div className="bowler-extra-stats">
                       <span>MAIDENS: <b id="anchorMasterBowlerMaidens">0</b></span>
                       <span>DOTS: <b id="anchorMasterBowlerDots">0</b></span>
+                      <span>NO BALLS: <b id="anchorMasterBowlerNoBalls">0</b></span>
+                      <span>WIDES: <b id="anchorMasterBowlerWides">0</b></span>
                     </div>
                   </div>
                 </div>
