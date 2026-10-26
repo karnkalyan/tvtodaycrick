@@ -27,10 +27,14 @@ import {
   fetchNplT20MatchesData,
   fetchNplT20StandingsData,
   fetchNplT20LiveSnapshot,
+  convertNplT20LiveMatchToParsed,
   mapRole,
   mapBatting,
   mapBowling,
 } from "../lib/nplt20-api";
+import { ensureIpv4Dispatcher } from "../lib/fetch-network";
+
+ensureIpv4Dispatcher();
 import { downloadTeamLogo, downloadPlayerImage } from "../lib/npl-asset-manager";
 import { fetchCricNepalLiveMatch, applyCricNepalMatchToDb } from "../lib/cricnepal-live";
 import { fetchOnlineKhabarLiveMatch, getOnlineKhabarUrlForMatch } from "../lib/onlinekhabar-live";
@@ -743,6 +747,7 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
         tournament: { season: year },
         status: "LIVE",
       },
+      include: { homeTeam: true, awayTeam: true },
     });
 
     const candidateMatches =
@@ -753,6 +758,7 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
               tournament: { season: year },
               status: "SCHEDULED",
             },
+            include: { homeTeam: true, awayTeam: true },
             orderBy: { startTime: "asc" },
             take: 2,
           });
@@ -787,29 +793,64 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
 
       let parsed: any = null;
 
-      // Primary attempt based on provider preference, with automatic fallback
+      // Multi-provider live match resolution:
+      // Attempts preferred provider first, and falls back to alternate providers automatically
       if (preferredProvider === "onlinekhabar" && okUrl) {
         try {
           parsed = await fetchOnlineKhabarLiveMatch(okUrl);
-        } catch {
-          if (cnUrl) {
-            try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
+        } catch {}
+        if (!parsed && cnUrl) {
+          try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
+        }
+      } else if (preferredProvider === "nplt20league") {
+        try {
+          const snapshot = await fetchNplT20LiveSnapshot();
+          const list = Array.isArray(snapshot) ? snapshot : (snapshot?.matches || snapshot?.data?.matches || []);
+          const matchedNpl = list.find((item: any) =>
+            m.title.toLowerCase().includes((item.team1?.name || "").toLowerCase()) ||
+            m.title.toLowerCase().includes((item.team2?.name || "").toLowerCase()) ||
+            (m.homeTeam?.name && item.team1?.name?.includes(m.homeTeam.name)) ||
+            (m.awayTeam?.name && item.team2?.name?.includes(m.awayTeam.name))
+          );
+          if (matchedNpl) {
+            parsed = convertNplT20LiveMatchToParsed(matchedNpl);
           }
+        } catch {}
+        if (!parsed && cnUrl) {
+          try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
+        }
+        if (!parsed && okUrl) {
+          try { parsed = await fetchOnlineKhabarLiveMatch(okUrl); } catch {}
         }
       } else {
-        // Default: try CricNepal first
+        // Default (cricnepal): try CricNepal first
         if (cnUrl) {
           try {
             parsed = await fetchCricNepalLiveMatch(cnUrl);
-          } catch {
-            // CricNepal unavailable or timed out -> fallback to OnlineKhabar
-          }
+          } catch {}
         }
         if (!parsed && okUrl) {
           try {
             parsed = await fetchOnlineKhabarLiveMatch(okUrl);
           } catch {}
         }
+      }
+
+      // If still not parsed, try NPLT20 snapshot as universal fallback
+      if (!parsed) {
+        try {
+          const snapshot = await fetchNplT20LiveSnapshot();
+          const list = Array.isArray(snapshot) ? snapshot : (snapshot?.matches || snapshot?.data?.matches || []);
+          const matchedNpl = list.find((item: any) =>
+            m.title.toLowerCase().includes((item.team1?.name || "").toLowerCase()) ||
+            m.title.toLowerCase().includes((item.team2?.name || "").toLowerCase()) ||
+            (m.homeTeam?.name && item.team1?.name?.includes(m.homeTeam.name)) ||
+            (m.awayTeam?.name && item.team2?.name?.includes(m.awayTeam.name))
+          );
+          if (matchedNpl) {
+            parsed = convertNplT20LiveMatchToParsed(matchedNpl);
+          }
+        } catch {}
       }
 
       if (parsed) {
@@ -825,16 +866,16 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
         const lastWarn = lastLiveWarnByMatch.get(m.id) || 0;
         if (now - lastWarn > 60000) {
           lastLiveWarnByMatch.set(m.id, now);
-          console.warn(`[NplService] Live sync skipped for match ${m.id} (tried ${cnUrl || "no-cn"} / ${okUrl || "no-ok"})`);
+          console.warn(`[NplService] Live sync skipped for match ${m.id} (tried ${cnUrl || "no-cn"} / ${okUrl || "no-ok"} / nplt20)`);
         }
       }
     }
 
-    // 2. SECONDARY / FALLBACK: nplt20 snapshot if no CricNepal match was live
+    // 2. SECONDARY / GLOBAL FALLBACK: check NPLT20 snapshot for any active matches not in recent list
     if (!hasLive) {
       try {
         const snapshot = await fetchNplT20LiveSnapshot();
-        const liveMatches = snapshot?.matches || [];
+        const liveMatches = Array.isArray(snapshot) ? snapshot : (snapshot?.matches || snapshot?.data?.matches || []);
         if (Array.isArray(liveMatches) && liveMatches.length > 0) {
           for (const lm of liveMatches) {
             const match = await prisma.match.findFirst({
@@ -846,15 +887,10 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
               },
             });
             if (match) {
-              await prisma.match.update({
-                where: { id: match.id },
-                data: {
-                  status: "LIVE",
-                  notes: `Live Score Update: ${lm.team1?.name} ${lm.team1?.score || ""} vs ${lm.team2?.name} ${lm.team2?.score || ""}`,
-                },
-              });
+              const parsedNpl = convertNplT20LiveMatchToParsed(lm);
+              await applyCricNepalMatchToDb(match.id, parsedNpl);
               updatedCount++;
-              hasLive = true;
+              if (parsedNpl.status === "LIVE") hasLive = true;
             }
           }
         }

@@ -156,6 +156,7 @@ export default function ScoreEntryPage() {
   const [showCustomExtra, setShowCustomExtra] = useState(false);
   const [extraCategory, setExtraCategory] = useState<ExtraCategory>("LB");
   const [extraRuns, setExtraRuns] = useState<number>(1);
+  const [extraBatRuns, setExtraBatRuns] = useState<number>(0);
   const [extraIsLegal, setExtraIsLegal] = useState<boolean>(true);
   const [showDirectAdjust, setShowDirectAdjust] = useState(false);
   const [directAdjustRuns, setDirectAdjustRuns] = useState<string>("1");
@@ -840,8 +841,12 @@ export default function ScoreEntryPage() {
     setExtraCategory(cat);
     if (cat === "LB" || cat === "B") {
       setExtraIsLegal(true);
+      setExtraBatRuns(0);
+    } else if (cat === "NB") {
+      setExtraIsLegal(false);
     } else {
       setExtraIsLegal(false);
+      setExtraBatRuns(0);
     }
   };
 
@@ -867,6 +872,7 @@ export default function ScoreEntryPage() {
         category: extraCategory,
         runs,
         isLegal,
+        batRuns: extraCategory === "NB" ? extraBatRuns : 0,
       }
     );
 
@@ -916,11 +922,17 @@ export default function ScoreEntryPage() {
         });
       }
 
-      // Striker: If legal delivery, striker faced a delivery (+1 ball), but runs are NOT counted to batter!
-      if (strikerId && isLegal) {
+      // Striker: If legal delivery, striker faced a delivery (+1 ball).
+      // If No Ball with bat runs, credit the bat runs to striker!
+      if (strikerId && (isLegal || (extraCategory === "NB" && result.strikerRuns > 0))) {
         const existing = match.stats?.find(
           (entry) => String(entry.playerId) === strikerId && Number(entry.innings) === activeInnings,
         );
+        const strikerRunsToAdd = result.strikerRuns || 0;
+        const ballsFacedToAdd = isLegal ? 1 : (result.strikerRuns > 0 ? 1 : 0);
+        const foursToAdd = strikerRunsToAdd >= 4 && strikerRunsToAdd < 6 ? 1 : 0;
+        const sixesToAdd = strikerRunsToAdd >= 6 ? 1 : 0;
+
         await api("/api/stats", {
           method: "POST",
           body: jsonBody({
@@ -928,10 +940,10 @@ export default function ScoreEntryPage() {
             playerId: Number(strikerId),
             teamId: Number(current.teamId),
             innings: activeInnings,
-            runs: existing?.runs || 0, // NOT COUNTED ON BATSMAN
-            ballsFaced: (existing?.ballsFaced || 0) + 1,
-            fours: existing?.fours || 0,
-            sixes: existing?.sixes || 0,
+            runs: (existing?.runs || 0) + strikerRunsToAdd,
+            ballsFaced: (existing?.ballsFaced || 0) + ballsFacedToAdd,
+            fours: (existing?.fours || 0) + foursToAdd,
+            sixes: (existing?.sixes || 0) + sixesToAdd,
             wickets: existing?.wickets || 0,
             ballsBowled: existing?.ballsBowled || 0,
             runsConceded: existing?.runsConceded || 0,
@@ -1688,17 +1700,24 @@ export default function ScoreEntryPage() {
 
                     <div style={{ marginBottom: 14 }}>
                       <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: 6 }}>
-                        Runs to Credit as Extras:
+                        Total Runs for Delivery (Extras + Runs):
                       </label>
                       <div className="custom-extra-runs-row">
-                        {[1, 2, 3, 4, 5, 6].map((num) => (
+                        {[1, 2, 3, 4, 5, 6, 7].map((num) => (
                           <button
                             key={num}
                             type="button"
                             className={`custom-extra-run-chip ${extraRuns === num ? "active" : ""}`}
-                            onClick={() => setExtraRuns(num)}
+                            onClick={() => {
+                              setExtraRuns(num);
+                              if (extraCategory === "NB" && num > 1) {
+                                setExtraBatRuns(num - 1);
+                              } else {
+                                setExtraBatRuns(0);
+                              }
+                            }}
                           >
-                            {num}
+                            +{num}
                           </button>
                         ))}
                         <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
@@ -1716,7 +1735,7 @@ export default function ScoreEntryPage() {
                               border: "1px solid var(--line-strong)",
                               background: "var(--surface)",
                               color: "var(--text)",
-                              fontWeight: 800,
+                              fontWeight: 850,
                               fontSize: "14px",
                               textAlign: "center",
                             }}
@@ -1724,6 +1743,32 @@ export default function ScoreEntryPage() {
                         </div>
                       </div>
                     </div>
+
+                    {extraCategory === "NB" && (
+                      <div style={{ marginBottom: 14, padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: "var(--radius)", border: "1px solid var(--line)" }}>
+                        <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                          Runs scored off bat by striker:
+                        </label>
+                        <div className="custom-extra-runs-row">
+                          {[0, 1, 2, 3, 4, 6].map((bRuns) => (
+                            <button
+                              key={bRuns}
+                              type="button"
+                              className={`custom-extra-run-chip ${extraBatRuns === bRuns ? "active" : ""}`}
+                              onClick={() => {
+                                setExtraBatRuns(bRuns);
+                                setExtraRuns(Math.max(extraRuns, bRuns + 1));
+                              }}
+                            >
+                              {bRuns === 0 ? "0 (All Extras)" : `${bRuns} off bat`}
+                            </button>
+                          ))}
+                        </div>
+                        <small style={{ color: "var(--muted)", fontSize: "11px", display: "block", marginTop: 4 }}>
+                          1 run is always counted as No Ball extra. Bat runs are credited to the striker.
+                        </small>
+                      </div>
+                    )}
 
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
                       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "12px", cursor: "pointer" }}>

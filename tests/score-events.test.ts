@@ -21,8 +21,8 @@ test("all quick-score outcomes apply the expected totals", () => {
   const expected = {
     "0": [10, 2, 6, 1], "1": [11, 2, 6, 1], "2": [12, 2, 6, 1], "3": [13, 2, 6, 1],
     "4": [14, 2, 6, 1], "6": [16, 2, 6, 1], wicket: [10, 3, 6, 1],
-    wide: [11, 2, 5, 2], noball: [11, 2, 5, 2],
-    "1lb": [11, 2, 6, 2], "2lb": [12, 2, 6, 3], "4lb": [14, 2, 6, 5], "1b": [11, 2, 6, 2],
+    wide: [11, 2, 5, 2], wd1: [12, 2, 5, 3], noball: [11, 2, 5, 2], nb1: [12, 2, 5, 3], nb4: [15, 2, 5, 6],
+    "1lb": [11, 2, 6, 2], "2lb": [12, 2, 6, 3], "3lb": [13, 2, 6, 4], "4lb": [14, 2, 6, 5], "1b": [11, 2, 6, 2],
   } as const;
   for (const event of QUICK_BALL_EVENTS) {
     const result = applyQuickBall(base, event.type);

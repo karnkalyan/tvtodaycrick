@@ -4,9 +4,8 @@ import { prisma } from "./prisma";
 import { fetchSource } from "./npl-source";
 import type { Prisma } from "@prisma/client";
 
-if (dns && typeof dns.setDefaultResultOrder === "function") {
-  dns.setDefaultResultOrder("ipv4first");
-}
+import { ensureIpv4Dispatcher } from "./fetch-network";
+ensureIpv4Dispatcher();
 
 export interface CricNepalParsedLiveMatch {
   sourceId?: string;
@@ -396,7 +395,7 @@ export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNep
   try {
     const response = await fetch(cleanUrl, {
       cache: "no-store",
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(15000),
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",

@@ -1753,6 +1753,9 @@
       case'bye':add('B',1,true,false,persist,true);break;
       case'extra':add('EX',1,false,false,persist,true);break;
       case'dot':add('0',0,true,false,persist);break;
+      case'wide1':add('WD+1',2,false,false,persist);break;
+      case'noBall1':add('NB+1',2,false,false,persist);break;
+      case'noBall4':add('NB+4',5,false,false,persist);break;
       case'wide':
         add('WD',1,false,false,persist);
         playStinger('wide', persist);

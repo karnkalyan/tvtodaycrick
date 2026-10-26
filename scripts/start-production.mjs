@@ -10,9 +10,10 @@ try {
   setGlobalDispatcher(
     new Agent({
       connect: {
-        autoSelectFamily: true,
-        autoSelectFamilyAttemptTimeout: 250,
-        timeout: 8000,
+        lookup: (hostname, options, callback) => {
+          dns.lookup(hostname, { ...options, family: 4, all: false }, callback);
+        },
+        timeout: 15000,
       },
     })
   );

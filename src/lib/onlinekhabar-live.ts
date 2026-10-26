@@ -2,9 +2,8 @@ import { load } from "cheerio";
 import dns from "node:dns";
 import type { CricNepalParsedLiveMatch } from "./cricnepal-live";
 
-if (dns && typeof dns.setDefaultResultOrder === "function") {
-  dns.setDefaultResultOrder("ipv4first");
-}
+import { ensureIpv4Dispatcher } from "./fetch-network";
+ensureIpv4Dispatcher();
 
 interface FailureBackoff {
   at: number;
@@ -347,7 +346,7 @@ export async function fetchOnlineKhabarLiveMatch(urlOrId: string | number): Prom
     if (!jsonEndpoint) {
       const pageRes = await fetch(targetUrl, {
         cache: "no-store",
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(15000),
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -370,7 +369,7 @@ export async function fetchOnlineKhabarLiveMatch(urlOrId: string | number): Prom
 
     const res = await fetch(jsonEndpoint, {
       cache: "no-store",
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(15000),
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",

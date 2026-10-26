@@ -3,6 +3,10 @@ import { downloadTeamLogo, downloadPlayerImage, mapWithConcurrency } from "./npl
 import { getFranchiseBrand } from "./npl-franchises";
 import type { NplFixture, NplPlayer, NplSeason, NplTeam } from "../types/npl";
 import type { BattingStyle, BowlingStyle, PlayerRole } from "@prisma/client";
+import { ensureIpv4Dispatcher } from "./fetch-network";
+import { oversStringToBalls, type CricNepalParsedLiveMatch } from "./cricnepal-live";
+
+ensureIpv4Dispatcher();
 
 const NPLT20_BASE = "https://nplt20league.com";
 const API_BASE = `${NPLT20_BASE}/api/v1`;
@@ -380,5 +384,155 @@ export async function fetchNplT20StandingsData(year: string = "2026"): Promise<N
  * Fetch live scores stream/snapshot
  */
 export async function fetchNplT20LiveSnapshot(): Promise<any> {
-  return fetchJson<any>("live/npl", 8000);
+  return fetchJson<any>("live/npl", 15000);
+}
+
+/**
+ * Converts an NPLT20 live snapshot match into a CricNepalParsedLiveMatch
+ * so it can be reconciled into the database with full innings and score continuity.
+ */
+export function convertNplT20LiveMatchToParsed(liveMatch: any): CricNepalParsedLiveMatch {
+  const team1 = liveMatch.team1 || {};
+  const team2 = liveMatch.team2 || {};
+
+  const parseScore = (s?: string) => {
+    if (!s) return { runs: 0, wickets: 0 };
+    const parts = String(s).split("/");
+    return {
+      runs: parseInt(parts[0], 10) || 0,
+      wickets: parts[1] !== undefined ? parseInt(parts[1], 10) || 0 : 0,
+    };
+  };
+
+  const t1Score = parseScore(team1.score);
+  const t1Balls = oversStringToBalls(team1.overs);
+  const t2Score = parseScore(team2.score);
+  const t2Balls = oversStringToBalls(team2.overs);
+
+  const rawStatus = (liveMatch.status || "").toLowerCase();
+  let status: CricNepalParsedLiveMatch["status"] = "SCHEDULED";
+  if (rawStatus === "live" || rawStatus === "innings_break" || rawStatus === "interrupted") {
+    status = "LIVE";
+  } else if (rawStatus === "completed" || rawStatus === "result" || liveMatch.result) {
+    status = "COMPLETED";
+  } else if (rawStatus === "abandoned" || rawStatus === "cancelled") {
+    status = "ABANDONED";
+  }
+
+  const hasCommentary = Array.isArray(liveMatch.commentary);
+  const commentaryText = hasCommentary ? liveMatch.commentary.map((c: any) => c.text || "").join(" ") : "";
+  const isTeam2First =
+    t2Score.wickets === 10 ||
+    commentaryText.includes("2ND INNINGS") ||
+    (t2Balls > 0 && t1Balls > 0 && commentaryText.toLowerCase().includes("chasing")) ||
+    (t2Score.runs > 0 && t1Balls <= t2Balls && t2Balls >= 100);
+
+  let innings1Team = team1;
+  let innings1Score = t1Score;
+  let innings1Balls = t1Balls;
+  let innings1Overs = team1.overs || "0.0";
+
+  let innings2Team = team2;
+  let innings2Score = t2Score;
+  let innings2Balls = t2Balls;
+  let innings2Overs = team2.overs || "0.0";
+
+  if (isTeam2First) {
+    innings1Team = team2;
+    innings1Score = t2Score;
+    innings1Balls = t2Balls;
+    innings1Overs = team2.overs || "0.0";
+
+    innings2Team = team1;
+    innings2Score = t1Score;
+    innings2Balls = t1Balls;
+    innings2Overs = team1.overs || "0.0";
+  }
+
+  const innings: CricNepalParsedLiveMatch["innings"] = [];
+  let currentInningsNumber = 1;
+
+  if (innings1Balls > 0 || innings1Score.runs > 0 || innings1Score.wickets > 0) {
+    const isInn1Done = innings1Score.wickets === 10 || innings1Balls >= 120 || innings2Balls > 0;
+    innings.push({
+      inningsNumber: 1,
+      battingTeamName: innings1Team.name || "Home",
+      bowlingTeamName: innings2Team.name || "Away",
+      runs: innings1Score.runs,
+      wickets: innings1Score.wickets,
+      balls: innings1Balls,
+      overs: innings1Overs,
+      extras: { total: 0, wides: 0, noBalls: 0, byes: 0, legByes: 0, penalties: 0 },
+      target: null,
+      status: isInn1Done ? "COMPLETED" : "LIVE",
+    });
+  }
+
+  if (innings2Balls > 0 || innings2Score.runs > 0 || innings2Score.wickets > 0 || (innings.length > 0 && innings1Score.runs > 0)) {
+    currentInningsNumber = 2;
+    const target = innings1Score.runs > 0 ? innings1Score.runs + 1 : null;
+    innings.push({
+      inningsNumber: 2,
+      battingTeamName: innings2Team.name || "Away",
+      bowlingTeamName: innings1Team.name || "Home",
+      runs: innings2Score.runs,
+      wickets: innings2Score.wickets,
+      balls: innings2Balls,
+      overs: innings2Overs,
+      extras: { total: 0, wides: 0, noBalls: 0, byes: 0, legByes: 0, penalties: 0 },
+      target,
+      status: status === "COMPLETED" ? "COMPLETED" : "LIVE",
+    });
+  }
+
+  const currentBatters: NonNullable<CricNepalParsedLiveMatch["liveSummary"]>["currentBatters"] = [];
+  let currentBowler: NonNullable<CricNepalParsedLiveMatch["liveSummary"]>["currentBowler"] = null;
+
+  if (hasCommentary && liveMatch.commentary.length > 0) {
+    for (const c of liveMatch.commentary) {
+      const clean = (c.text || "").replace(/<[^>]+>/g, "").trim();
+      const m = clean.match(/^([A-Za-z\s.'-]+)\s+to\s+([A-Za-z\s.'-]+):/);
+      if (m) {
+        const bowlerName = m[1].trim();
+        const batterName = m[2].trim();
+        if (!currentBowler) {
+          currentBowler = {
+            name: bowlerName,
+            overs: c.over || "0.0",
+            runs: 0,
+            wickets: 0,
+            economy: 0,
+          };
+        }
+        if (!currentBatters.some((b) => b.name.toLowerCase() === batterName.toLowerCase())) {
+          currentBatters.push({
+            name: batterName,
+            runs: 0,
+            balls: 0,
+            fours: 0,
+            sixes: 0,
+            strikeRate: 0,
+            isStriker: currentBatters.length === 0,
+          });
+          if (currentBatters.length >= 2) break;
+        }
+      }
+    }
+  }
+
+  return {
+    sourceId: liveMatch.ourMatchId || liveMatch.providerMatchId || "",
+    sourceUrl: `${NPLT20_BASE}/matches/2026/`,
+    title: liveMatch.title || `${team1.name || "Home"} vs ${team2.name || "Away"}`,
+    status,
+    venue: liveMatch.venue || "Tribhuvan University Cricket Ground, Kirtipur",
+    homeTeam: { name: team1.name || "Home", abbr: team1.short },
+    awayTeam: { name: team2.name || "Away", abbr: team2.short },
+    currentInningsNumber,
+    innings,
+    liveSummary: {
+      currentBatters,
+      currentBowler,
+    },
+  };
 }

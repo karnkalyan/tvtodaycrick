@@ -7,9 +7,13 @@ export type QuickBallType =
   | "6"
   | "wicket"
   | "wide"
+  | "wd1"
   | "noball"
+  | "nb1"
+  | "nb4"
   | "1lb"
   | "2lb"
+  | "3lb"
   | "4lb"
   | "1b";
 
@@ -30,9 +34,14 @@ export type QuickBallEvent = {
     | "six"
     | "wicket"
     | "wide"
+    | "wide1"
     | "noBall"
+    | "noBall1"
+    | "noBall4"
+    | "legBye"
     | "legBye1"
     | "legBye2"
+    | "legBye3"
     | "legBye4"
     | "bye1";
   isFour: boolean;
@@ -40,6 +49,8 @@ export type QuickBallEvent = {
   isExtra?: boolean;
   isLegBye?: boolean;
   isBye?: boolean;
+  isNoBall?: boolean;
+  isWide?: boolean;
 };
 
 export const QUICK_BALL_EVENTS: readonly QuickBallEvent[] = [
@@ -50,10 +61,14 @@ export const QUICK_BALL_EVENTS: readonly QuickBallEvent[] = [
   { type: "4", label: "FOUR 4", className: "four", runs: 4, extras: 0, legalBalls: 1, wickets: 0, broadcastAction: "four", isFour: true, isSix: false },
   { type: "6", label: "SIX 6", className: "six", runs: 6, extras: 0, legalBalls: 1, wickets: 0, broadcastAction: "six", isFour: false, isSix: true },
   { type: "wicket", label: "WICKET", className: "wicket", runs: 0, extras: 0, legalBalls: 1, wickets: 1, broadcastAction: "wicket", isFour: false, isSix: false },
-  { type: "wide", label: "WIDE", className: "extra", runs: 1, extras: 1, legalBalls: 0, wickets: 0, broadcastAction: "wide", isFour: false, isSix: false, isExtra: true },
-  { type: "noball", label: "NO BALL", className: "extra", runs: 1, extras: 1, legalBalls: 0, wickets: 0, broadcastAction: "noBall", isFour: false, isSix: false, isExtra: true },
+  { type: "wide", label: "WIDE", className: "extra", runs: 1, extras: 1, legalBalls: 0, wickets: 0, broadcastAction: "wide", isFour: false, isSix: false, isExtra: true, isWide: true },
+  { type: "wd1", label: "WD+1", className: "extra", runs: 2, extras: 2, legalBalls: 0, wickets: 0, broadcastAction: "wide1", isFour: false, isSix: false, isExtra: true, isWide: true },
+  { type: "noball", label: "NO BALL", className: "extra", runs: 1, extras: 1, legalBalls: 0, wickets: 0, broadcastAction: "noBall", isFour: false, isSix: false, isExtra: true, isNoBall: true },
+  { type: "nb1", label: "NB+1", className: "extra", runs: 2, extras: 2, legalBalls: 0, wickets: 0, broadcastAction: "noBall1", isFour: false, isSix: false, isExtra: true, isNoBall: true },
+  { type: "nb4", label: "NB+4", className: "extra", runs: 5, extras: 5, legalBalls: 0, wickets: 0, broadcastAction: "noBall4", isFour: false, isSix: false, isExtra: true, isNoBall: true },
   { type: "1lb", label: "1 LB", className: "extra", runs: 1, extras: 1, legalBalls: 1, wickets: 0, broadcastAction: "legBye1", isFour: false, isSix: false, isExtra: true, isLegBye: true },
   { type: "2lb", label: "2 LB", className: "extra", runs: 2, extras: 2, legalBalls: 1, wickets: 0, broadcastAction: "legBye2", isFour: false, isSix: false, isExtra: true, isLegBye: true },
+  { type: "3lb", label: "3 LB", className: "extra", runs: 3, extras: 3, legalBalls: 1, wickets: 0, broadcastAction: "legBye3", isFour: false, isSix: false, isExtra: true, isLegBye: true },
   { type: "4lb", label: "4 LB", className: "extra", runs: 4, extras: 4, legalBalls: 1, wickets: 0, broadcastAction: "legBye4", isFour: false, isSix: false, isExtra: true, isLegBye: true },
   { type: "1b", label: "1 B", className: "extra", runs: 1, extras: 1, legalBalls: 1, wickets: 0, broadcastAction: "bye1", isFour: false, isSix: false, isExtra: true, isBye: true },
 ] as const;
@@ -84,6 +99,7 @@ export type CustomExtraInput = {
   category: ExtraCategory;
   runs: number;
   isLegal?: boolean;
+  batRuns?: number;
 };
 
 export type CustomExtraResult = {
@@ -94,6 +110,8 @@ export type CustomExtraResult = {
   isLegal: boolean;
   category: ExtraCategory;
   runsAdded: number;
+  extraRuns: number;
+  strikerRuns: number;
   broadcastAction: string;
 };
 
@@ -101,15 +119,21 @@ export function applyCustomExtra(
   score: { runs: number; wickets: number; balls: number; extras: number },
   input: CustomExtraInput,
 ): CustomExtraResult {
-  const runs = Math.max(0, Number(input.runs) || 0);
+  const totalRuns = Math.max(0, Number(input.runs) || 0);
   const isLegal = input.isLegal !== undefined ? input.isLegal : (input.category === "LB" || input.category === "B");
   const legalBalls = isLegal ? 1 : 0;
 
+  // On No Ball with bat runs, credit the bat runs to the striker and the 1 penalty run to extras
+  const batRuns = (input.category === "NB" && input.batRuns && input.batRuns > 0)
+    ? Math.min(input.batRuns, Math.max(0, totalRuns - 1))
+    : 0;
+  const extraRuns = totalRuns - batRuns;
+
   let broadcastAction = "legBye";
   if (input.category === "LB") {
-    broadcastAction = runs === 1 ? "legBye1" : runs === 2 ? "legBye2" : runs === 4 ? "legBye4" : "legBye";
+    broadcastAction = totalRuns === 1 ? "legBye1" : totalRuns === 2 ? "legBye2" : totalRuns === 4 ? "legBye4" : "legBye";
   } else if (input.category === "B") {
-    broadcastAction = runs === 1 ? "bye1" : "bye";
+    broadcastAction = totalRuns === 1 ? "bye1" : "bye";
   } else if (input.category === "WD") {
     broadcastAction = "wide";
   } else if (input.category === "NB") {
@@ -119,14 +143,15 @@ export function applyCustomExtra(
   }
 
   return {
-    runs: score.runs + runs,
+    runs: score.runs + totalRuns,
     wickets: score.wickets,
     balls: score.balls + legalBalls,
-    extras: score.extras + runs,
+    extras: score.extras + extraRuns,
     isLegal,
     category: input.category,
-    runsAdded: runs,
+    runsAdded: totalRuns,
+    extraRuns,
+    strikerRuns: batRuns,
     broadcastAction,
   };
 }
-
