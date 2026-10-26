@@ -11,6 +11,7 @@ import {
   Target,
   Trophy,
   UserRound,
+  Volume2,
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -200,6 +201,7 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   const [state, setState] = useState<BroadcastState>(DEFAULT_STATE);
   const [teams, setTeams] = useState<NplTeam[]>([]);
   const [connected, setConnected] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
   const [event, setEvent] = useState<{ type: DeliveryEvent; key: number } | null>(null);
   const eventTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEvent = useRef({ type: "" as string, at: 0 });
@@ -227,7 +229,7 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
     utterance.rate = cue.rate;
     utterance.pitch = cue.pitch;
     utterance.volume = 1;
-    const restoreCrowd = () => { if (crowdAudio.current) crowdAudio.current.volume = 0.14; };
+    const restoreCrowd = () => { if (crowdAudio.current) crowdAudio.current.volume = 0.22; };
     if (crowdAudio.current) crowdAudio.current.volume = cue.crowdVolume;
     utterance.onend = restoreCrowd;
     utterance.onerror = restoreCrowd;
@@ -248,8 +250,12 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   useEffect(() => {
     const audio = crowdAudio.current;
     if (!audio) return;
-    audio.volume = 0.14;
-    const start = () => { void audio.play().catch(() => undefined); };
+    audio.volume = 0.22;
+    const start = () => {
+      void audio.play()
+        .then(() => setAudioBlocked(false))
+        .catch(() => setAudioBlocked(true));
+    };
     const resumeVisible = () => { if (!document.hidden) start(); };
     start();
     window.addEventListener("pointerdown", start, { once: true });
@@ -262,6 +268,14 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
       audio.pause();
       window.speechSynthesis?.cancel();
     };
+  }, []);
+
+  const enableAudio = useCallback(() => {
+    const audio = crowdAudio.current;
+    if (!audio) return;
+    audio.muted = false;
+    audio.volume = 0.22;
+    void audio.play().then(() => setAudioBlocked(false)).catch(() => setAudioBlocked(true));
   }, []);
 
   const applyIncomingState = useCallback((incoming?: BroadcastState | null, inferDelivery = false) => {
@@ -407,13 +421,16 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
     "--team-b-accent": teamB.secondary,
   }) as React.CSSProperties, [teamA.primary, teamA.secondary, teamB.primary, teamB.secondary]);
 
-  const audioBed = <audio ref={crowdAudio} src="/audio/kashtrix/stadium-crowd.ogg" autoPlay loop preload="auto" aria-hidden="true" />;
+  const audioBed = <audio ref={crowdAudio} src="/audio/kashtrix/stadium-crowd.ogg" autoPlay loop preload="auto" playsInline aria-hidden="true" />;
+  const audioGate = audioBlocked ? <button className={styles.audioGate} type="button" onClick={enableAudio}><Volume2 /> ENABLE STADIUM AUDIO</button> : null;
 
   if (variant === "editorial") {
     return (
       <main className={styles.editorialOutput} style={theme}>
         {audioBed}
+        {audioGate}
         <div className={styles.editorialTexture} aria-hidden="true" />
+        <div className={styles.editorialPitch} aria-hidden="true"><i /><i /><i /><b /><b /></div>
         <header className={styles.editorialHeader}>
           <div className={styles.editorialBrand}><Trophy /><div><small>NEPAL PREMIER LEAGUE</small><strong>KASHTRIX MATCHBOARD</strong></div></div>
           <div className={styles.editorialInnings}>{state.live?.innings || "MATCH SCHEDULED"}</div>
@@ -460,6 +477,7 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   return (
     <main className={styles.output} style={theme}>
       {audioBed}
+      {audioGate}
       <div className={styles.virtualSet} aria-hidden="true" />
       <div className={styles.setShade} aria-hidden="true" />
       <div className={styles.lightBeams} aria-hidden="true"><i /><i /><i /></div>
