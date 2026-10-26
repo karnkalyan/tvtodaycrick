@@ -139,11 +139,9 @@ export default function BroadcastControllerPage() {
           setNplMatches(data.matches);
           const teamsList = data.teams || [];
           setNplTeams(teamsList);
-          // Automatically load Match 1 by default on boot without user having to select anything
-          const match1 = data.matches[0];
-          if (match1) {
-            handleSelectFixture(match1.id, data.matches, teamsList);
-          }
+          // Do not publish a fixture preset on boot. Score Entry owns the live
+          // batting order and the persisted broadcast state restores it below.
+          // A director can still explicitly select a fixture when required.
         } else if (data?.teams) {
           setNplTeams(data.teams);
         }
@@ -264,9 +262,13 @@ export default function BroadcastControllerPage() {
       } catch {}
     }
     loadDbState();
+    const dbPoll = window.setInterval(() => {
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) loadDbState();
+    }, 2000);
 
+    let channel: BroadcastChannel | null = null;
     if (typeof window !== "undefined" && "BroadcastChannel" in window) {
-      const channel = new BroadcastChannel(CHANNEL_NAME);
+      channel = new BroadcastChannel(CHANNEL_NAME);
       channelRef.current = channel;
 
       channel.onmessage = (event) => {
@@ -288,10 +290,11 @@ export default function BroadcastControllerPage() {
         }
       };
 
-      return () => {
-        channel.close();
-      };
     }
+    return () => {
+      window.clearInterval(dbPoll);
+      channel?.close();
+    };
   }, []);
 
   // Send cue helper: dispatches to WebSocket, BroadcastChannel, iframe, and persists to DB
@@ -352,29 +355,39 @@ export default function BroadcastControllerPage() {
         nextScoreMode = payload.mode as any;
       }
 
+      const incoming = action === "updateData" || action === "dataUpdated"
+        ? ((payload.payload as Record<string, any> | undefined) || payload)
+        : {};
+      const persistedMatch = { teamA, teamB, ...(incoming.match || {}) };
+      const persistedScore = { runs, wickets, overs, ...(incoming.score || {}) };
+      const persistedLive = {
+        strikerName,
+        strikerRuns,
+        strikerBalls,
+        nonStrikerName,
+        nonStrikerRuns,
+        nonStrikerBalls,
+        bowlerName,
+        bowlerFigures,
+        bowlerOvers,
+        matchLabel,
+        venue,
+        requirement,
+        innings,
+        rateText,
+        ...(incoming.live || {}),
+      };
+
       fetch("/api/broadcast/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           state: {
-            match: { teamA, teamB },
-            score: { runs, wickets, overs },
-            live: {
-              strikerName,
-              strikerRuns,
-              strikerBalls,
-              nonStrikerName,
-              nonStrikerRuns,
-              nonStrikerBalls,
-              bowlerName,
-              bowlerFigures,
-              bowlerOvers,
-              matchLabel,
-              venue,
-              requirement,
-              innings,
-              rateText,
-            },
+            match: persistedMatch,
+            score: persistedScore,
+            live: persistedLive,
+            ...(incoming.fow !== undefined ? { fow: incoming.fow } : {}),
+            ...(incoming.points !== undefined ? { points: incoming.points } : {}),
             ui: {
               scoreMode: nextScoreMode,
               graphic: nextGraphic,
@@ -520,9 +533,14 @@ export default function BroadcastControllerPage() {
     const homeCode = normalizeCode(m.homeTeamCode || m.homeTeam);
     const awayCode = normalizeCode(m.awayTeamCode || m.awayTeam);
 
-    // 1. If 2nd innings active (chase), chasing team is batting (Team A)
-    if (m.inn2Data && (m.status === "LIVE" || m.status === "COMPLETED")) {
-      return { battingCode: awayCode, bowlingCode: homeCode };
+    // Persisted innings assignments are authoritative after a score-entry swap.
+    const activeData = Number(m.activeInningsNumber) === 2 ? m.inn2Data : m.inn1Data;
+    if (activeData?.teamCode) {
+      const battingCode = normalizeCode(activeData.teamCode);
+      return {
+        battingCode,
+        bowlingCode: battingCode === homeCode ? awayCode : homeCode,
+      };
     }
 
     // 2. If toss has been conducted
@@ -562,6 +580,9 @@ export default function BroadcastControllerPage() {
     // Pick squad players strictly: Batters from Batting Team (Left), Bowler from Bowling Team (Right)
     const battingTeamData = teamsList.find((t: any) => t.code === battingCode || t.shortName === battingCode);
     const bowlingTeamData = teamsList.find((t: any) => t.code === bowlingCode || t.shortName === bowlingCode);
+    const battingTeamName = (battingTeamData?.name || (battingCode === normalizeCode(m.homeTeamCode || m.homeTeam) ? m.homeTeam : m.awayTeam)).toUpperCase();
+    const bowlingTeamName = (bowlingTeamData?.name || (bowlingCode === normalizeCode(m.homeTeamCode || m.homeTeam) ? m.homeTeam : m.awayTeam)).toUpperCase();
+    const activeInningsData = Number(m.activeInningsNumber) === 2 ? m.inn2Data : m.inn1Data;
 
     let sName = "BATTER 1";
     let nsName = "BATTER 2";
@@ -610,7 +631,7 @@ export default function BroadcastControllerPage() {
       initOvers = "0.0";
       initTarget = "-";
       innText = "MATCH SCHEDULED";
-      reqText = `${m.homeTeam.toUpperCase()} vs ${m.awayTeam.toUpperCase()} · MATCH SCHEDULED`;
+      reqText = `${battingTeamName} vs ${bowlingTeamName} · MATCH SCHEDULED`;
       crrText = "MATCH NOT STARTED";
       tossMsg = m.tossWinner
         ? `${m.tossWinner.toUpperCase()} WON TOSS & ELECTED TO ${(m.tossDecision || 'BOWL').toUpperCase()}`
@@ -624,16 +645,13 @@ export default function BroadcastControllerPage() {
       matchFow = [];
     } else if (isCompleted) {
       // Match completed: load exact historical / final scorecard
-      if (m.inn2Data && typeof m.inn2Data.runs === "number" && m.inn2Data.runs > 0) {
-        initRuns = m.inn2Data.runs;
-        initWickets = Math.min(10, m.inn2Data.wickets ?? 0);
-        initOvers = m.inn2Data.overs || "20.0";
-        initTarget = m.inn2Data.target || (m.inn1Data?.runs ? m.inn1Data.runs + 1 : "-");
-      } else if (m.inn1Data && typeof m.inn1Data.runs === "number" && m.inn1Data.runs > 0) {
-        initRuns = m.inn1Data.runs;
-        initWickets = Math.min(10, m.inn1Data.wickets ?? 0);
-        initOvers = m.inn1Data.overs || "20.0";
-        initTarget = "-";
+      if (activeInningsData && typeof activeInningsData.runs === "number") {
+        initRuns = activeInningsData.runs;
+        initWickets = Math.min(10, activeInningsData.wickets ?? 0);
+        initOvers = activeInningsData.overs || "0.0";
+        initTarget = Number(m.activeInningsNumber) === 2
+          ? activeInningsData.target || (m.inn1Data?.runs !== undefined ? m.inn1Data.runs + 1 : "-")
+          : "-";
       } else {
         initRuns = m.homeScore ? parseInt(m.homeScore) : 0;
         initWickets = m.homeWkts ? parseInt(m.homeWkts) : 0;
@@ -652,25 +670,25 @@ export default function BroadcastControllerPage() {
       bOvs = "4.0";
     } else if (isLive) {
       // Live match from database or stream
-      if (m.inn2Data && typeof m.inn2Data.runs === "number") {
-        initRuns = m.inn2Data.runs;
-        initWickets = Math.min(10, m.inn2Data.wickets ?? 0);
-        initOvers = m.inn2Data.overs || "0.0";
-        initTarget = m.inn2Data.target || (m.inn1Data?.runs ? m.inn1Data.runs + 1 : "-");
+      if (Number(m.activeInningsNumber) === 2 && activeInningsData && typeof activeInningsData.runs === "number") {
+        initRuns = activeInningsData.runs;
+        initWickets = Math.min(10, activeInningsData.wickets ?? 0);
+        initOvers = activeInningsData.overs || "0.0";
+        initTarget = activeInningsData.target || (m.inn1Data?.runs !== undefined ? m.inn1Data.runs + 1 : "-");
         innText = "CHASE · 2ND INNINGS";
         const [ovP, blP] = String(initOvers).split(".").map(Number);
         const totB = (ovP || 0) * 6 + (blP || 0);
         const remB = Math.max(1, 120 - totB);
         const tgtNum = Number(initTarget) || 0;
         const remR = Math.max(0, tgtNum - initRuns);
-        reqText = tgtNum > 0 ? `${m.homeTeam.toUpperCase()} NEED ${remR} RUNS IN ${remB} BALLS` : `${m.homeTeam.toUpperCase()} 2ND INNINGS`;
-      } else if (m.inn1Data && typeof m.inn1Data.runs === "number") {
-        initRuns = m.inn1Data.runs;
-        initWickets = Math.min(10, m.inn1Data.wickets ?? 0);
-        initOvers = m.inn1Data.overs || "0.0";
+        reqText = tgtNum > 0 ? `${battingTeamName} NEED ${remR} RUNS IN ${remB} BALLS` : `${battingTeamName} 2ND INNINGS`;
+      } else if (activeInningsData && typeof activeInningsData.runs === "number") {
+        initRuns = activeInningsData.runs;
+        initWickets = Math.min(10, activeInningsData.wickets ?? 0);
+        initOvers = activeInningsData.overs || "0.0";
         initTarget = "-";
         innText = "1ST INNINGS";
-        reqText = `${m.homeTeam.toUpperCase()} 1ST INNINGS · LIVE`;
+        reqText = `${battingTeamName} 1ST INNINGS · LIVE`;
       }
       const [ovP, blP] = String(initOvers).split(".").map(Number);
       const totB = (ovP || 0) * 6 + (blP || 0);
@@ -800,6 +818,12 @@ export default function BroadcastControllerPage() {
         const curM = (dbData.matches || []).find((x: any) => x.id === selectedMatchId) || dbData.matches?.[0];
         if (curM) {
           const { battingCode, bowlingCode } = resolveBattingAndBowlingTeams(curM);
+          const activeInningsData = Number(curM.activeInningsNumber) === 2 ? curM.inn2Data : curM.inn1Data;
+          const battingName = activeInningsData?.teamName?.toUpperCase()
+            || (battingCode === normalizeCode(curM.homeTeamCode || curM.homeTeam) ? curM.homeTeam : curM.awayTeam).toUpperCase();
+          const bowlingName = battingCode === normalizeCode(curM.homeTeamCode || curM.homeTeam)
+            ? curM.awayTeam.toUpperCase()
+            : curM.homeTeam.toUpperCase();
 
           // Build clean points table from active standings
           const activePoints = (dbData.standings || []).map((s: any, idx: number) => [
@@ -813,7 +837,7 @@ export default function BroadcastControllerPage() {
           ]);
 
           if (curM.status === "SCHEDULED") {
-            const scheduledReq = `${curM.homeTeam.toUpperCase()} vs ${curM.awayTeam.toUpperCase()} · MATCH SCHEDULED`;
+            const scheduledReq = `${battingName} vs ${bowlingName} · MATCH SCHEDULED`;
             const scheduledToss = curM.tossWinner
               ? `${curM.tossWinner.toUpperCase()} WON TOSS & ELECTED TO ${(curM.tossDecision || 'BOWL').toUpperCase()}`
               : "MATCH SCHEDULED · TOSS AT 12:45 PM · MATCH COMMENCES 1:15 PM NPT";
@@ -856,10 +880,12 @@ export default function BroadcastControllerPage() {
               ...prevL.slice(0, 15),
             ]);
           } else if (curM.status === "COMPLETED") {
-            const finRuns = curM.inn2Data?.runs ?? curM.inn1Data?.runs ?? (curM.homeScore ? parseInt(curM.homeScore) : 0);
-            const finWkts = curM.inn2Data?.wickets ?? curM.inn1Data?.wickets ?? (curM.homeWkts ? parseInt(curM.homeWkts) : 0);
-            const finOvs = curM.inn2Data?.overs ?? curM.inn1Data?.overs ?? (curM.homeOvers ? String(curM.homeOvers) : "20.0");
-            const finTgt = curM.inn2Data?.target ?? (curM.inn1Data?.runs ? curM.inn1Data.runs + 1 : "-");
+            const finRuns = activeInningsData?.runs ?? (curM.homeScore ? parseInt(curM.homeScore) : 0);
+            const finWkts = activeInningsData?.wickets ?? (curM.homeWkts ? parseInt(curM.homeWkts) : 0);
+            const finOvs = activeInningsData?.overs ?? (curM.homeOvers ? String(curM.homeOvers) : "0.0");
+            const finTgt = Number(curM.activeInningsNumber) === 2
+              ? activeInningsData?.target ?? (curM.inn1Data?.runs !== undefined ? curM.inn1Data.runs + 1 : "-")
+              : "-";
             const resText = curM.resultText || "MATCH COMPLETED";
 
             setRuns(finRuns);
@@ -893,16 +919,16 @@ export default function BroadcastControllerPage() {
               ...prevL.slice(0, 15),
             ]);
           } else if (curM.status === "LIVE") {
-            const activeRuns = curM.inn2Data?.runs ?? curM.inn1Data?.runs ?? runs;
-            const activeWkts = curM.inn2Data?.wickets ?? curM.inn1Data?.wickets ?? wickets;
-            const activeOvs = curM.inn2Data?.overs ?? curM.inn1Data?.overs ?? overs;
+            const activeRuns = activeInningsData?.runs ?? runs;
+            const activeWkts = activeInningsData?.wickets ?? wickets;
+            const activeOvs = activeInningsData?.overs ?? overs;
 
             if (prevLiveScoreRef.current) {
               const prev = prevLiveScoreRef.current;
               if (activeWkts > prev.wickets) {
                 triggerStinger("wicket");
                 setAutoLogs((prevL) => [
-                  `[${new Date().toLocaleTimeString()}] ⚡ REAL WICKET: ${curM.homeTeam} ${activeRuns}/${activeWkts}! Wicket Stinger triggered.`,
+                  `[${new Date().toLocaleTimeString()}] ⚡ REAL WICKET: ${battingName} ${activeRuns}/${activeWkts}! Wicket Stinger triggered.`,
                   ...prevL.slice(0, 15),
                 ]);
               } else if (activeRuns - prev.runs === 4) {
@@ -934,7 +960,7 @@ export default function BroadcastControllerPage() {
             });
 
             setAutoLogs((prevL) => [
-              `[${new Date().toLocaleTimeString()}] ⚡ LIVE NPL MATCH UPDATE: ${curM.homeTeam} (${activeRuns}/${activeWkts} in ${activeOvs} ov)`,
+              `[${new Date().toLocaleTimeString()}] ⚡ LIVE NPL MATCH UPDATE: ${battingName} (${activeRuns}/${activeWkts} in ${activeOvs} ov)`,
               ...prevL.slice(0, 15),
             ]);
           }

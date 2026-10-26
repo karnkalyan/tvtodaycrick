@@ -155,6 +155,31 @@ export async function GET() {
       matches: matches.map((m) => {
         const inn1 = m.innings.find((i) => i.inningsNumber === 1);
         const inn2 = m.innings.find((i) => i.inningsNumber === 2);
+        const homeInnings = m.innings.find((i) => i.teamId === m.homeTeamId);
+        const awayInnings = m.innings.find((i) => i.teamId === m.awayTeamId);
+        const inningsStarted = (innings: typeof inn1) => Boolean(innings && (
+          innings.status !== "NOT_STARTED"
+          || innings.runs > 0
+          || innings.wickets > 0
+          || innings.balls > 0
+        ));
+        const activeInnings = m.innings.find((i) => i.status === "LIVE")
+          || (inningsStarted(inn2) ? inn2 : inn1);
+        const effectiveStatus = m.innings.some((i) => i.status === "LIVE") ? "LIVE" : m.status;
+        const scoreText = (innings: typeof inn1) => innings
+          ? `${innings.runs}/${innings.wickets} (${Math.floor(innings.balls / 6)}.${innings.balls % 6} ov)`
+          : null;
+        const inningsData = (innings: typeof inn1) => innings ? {
+          runs: innings.runs,
+          wickets: innings.wickets,
+          balls: innings.balls,
+          overs: `${Math.floor(innings.balls / 6)}.${innings.balls % 6}`,
+          target: innings.target,
+          status: innings.status,
+          teamId: innings.teamId,
+          teamCode: innings.teamId === m.homeTeamId ? m.homeTeam.shortName : m.awayTeam.shortName,
+          teamName: innings.teamId === m.homeTeamId ? m.homeTeam.name : m.awayTeam.name,
+        } : null;
         return {
           id: m.id,
           name: `${m.homeTeam.name} vs ${m.awayTeam.name}`,
@@ -167,25 +192,15 @@ export async function GET() {
           awayTeamCode: m.awayTeam.shortName,
           venue: m.venue || "TU Cricket Ground, Kirtipur",
           startTime: m.startTime,
-          status: m.status,
+          status: effectiveStatus,
+          storedStatus: m.status,
           tossWinner: m.toss?.winnerTeam?.name || null,
           tossDecision: m.toss?.decision || null,
-          homeScore: inn1 ? `${inn1.runs}/${inn1.wickets} (${inn1.balls > 0 ? `${Math.floor(inn1.balls / 6)}.${inn1.balls % 6}` : '20.0'} ov)` : null,
-          awayScore: inn2 ? `${inn2.runs}/${inn2.wickets} (${inn2.balls > 0 ? `${Math.floor(inn2.balls / 6)}.${inn2.balls % 6}` : '18.3'} ov)` : null,
-          inn1Data: inn1 ? {
-            runs: inn1.runs,
-            wickets: inn1.wickets,
-            balls: inn1.balls,
-            overs: inn1.balls > 0 ? `${Math.floor(inn1.balls / 6)}.${inn1.balls % 6}` : "20.0",
-            target: inn1.target,
-          } : null,
-          inn2Data: inn2 ? {
-            runs: inn2.runs,
-            wickets: inn2.wickets,
-            balls: inn2.balls,
-            overs: inn2.balls > 0 ? `${Math.floor(inn2.balls / 6)}.${inn2.balls % 6}` : "18.3",
-            target: inn2.target,
-          } : null,
+          homeScore: scoreText(homeInnings),
+          awayScore: scoreText(awayInnings),
+          activeInningsNumber: activeInnings?.inningsNumber || 1,
+          inn1Data: inningsData(inn1),
+          inn2Data: inningsData(inn2),
           resultText: m.resultText || null,
         };
       }),

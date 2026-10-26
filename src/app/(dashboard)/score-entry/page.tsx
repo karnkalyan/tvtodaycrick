@@ -349,6 +349,20 @@ export default function ScoreEntryPage() {
     const bOvers = Number(current.balls) || 0;
     const ovStr = `${Math.floor(bOvers / 6)}.${bOvers % 6}`;
     const inningsStarted = current.status === "LIVE" || bOvers > 0 || Number(current.runs) > 0 || Number(current.wickets) > 0;
+    const currentRunRate = bOvers > 0 ? (Number(current.runs) / (bOvers / 6)).toFixed(2) : "0.00";
+    const target = Number(current.target) || 0;
+    const runsNeeded = target > 0 ? Math.max(0, target - Number(current.runs)) : 0;
+    const inningsLabel = inningsStarted
+      ? (activeInnings === 1 ? "1ST INNINGS" : "CHASE · 2ND INNINGS")
+      : "MATCH SCHEDULED";
+    const requirement = target > 0
+      ? `${battingTeam.name.toUpperCase()} NEED ${runsNeeded} RUNS TO WIN`
+      : inningsStarted
+        ? `${battingTeam.name.toUpperCase()} · 1ST INNINGS`
+        : `${battingTeam.name.toUpperCase()} vs ${bowlingTeam.name.toUpperCase()} · MATCH SCHEDULED`;
+    const tossText = sourceMatch.toss
+      ? `${sourceMatch.toss.winnerTeamId === sourceMatch.homeTeamId ? sourceMatch.homeTeam.name : sourceMatch.awayTeam.name} WON TOSS & ELECTED TO ${sourceMatch.toss.decision}`
+      : "TOSS NOT YET RECORDED";
 
     const striker = battingTeam.players?.find((p) => String(p.id) === strikerId);
     const nonStriker = battingTeam.players?.find((p) => String(p.id) === nonStrikerId);
@@ -362,11 +376,15 @@ export default function ScoreEntryPage() {
       match: {
         teamA: battingTeam.shortName || "KAG",
         teamB: bowlingTeam.shortName || "JAB",
+        teamAName: battingTeam.name,
+        teamBName: bowlingTeam.name,
+        inningsNumber: activeInnings,
       },
       score: {
         runs: Number(current.runs) || 0,
         wickets: Number(current.wickets) || 0,
         overs: ovStr,
+        target: target || null,
       },
       live: {
         strikerName: striker?.displayName?.toUpperCase() || "BATTER",
@@ -380,8 +398,11 @@ export default function ScoreEntryPage() {
         bowlerOvers: `${Math.floor((bowlerStat?.ballsBowled ?? 0) / 6)}.${(bowlerStat?.ballsBowled ?? 0) % 6}`,
         matchLabel: `${sourceMatch.title} · MATCH ${sourceMatch.matchNumber || "01"}`,
         venue: sourceMatch.venue || "TU INTERNATIONAL CRICKET GROUND",
-        requirement: current.target ? `NEED ${Number(current.target) - Number(current.runs)} RUNS TO WIN` : "",
-        innings: inningsStarted ? (activeInnings === 1 ? "1ST INNINGS" : "CHASE · 2ND INNINGS") : "MATCH SCHEDULED",
+        requirement,
+        innings: inningsLabel,
+        rateText: inningsStarted ? `CRR ${currentRunRate}` : "MATCH NOT STARTED",
+        target: target || "-",
+        tossText,
       },
     };
 
@@ -763,9 +784,9 @@ export default function ScoreEntryPage() {
     return <Spinner />;
   }
 
-  // Derive active innings scores for both teams for display in Hero
-  const homeInnings = [inn1, inn2].find((i) => i?.teamId === String(match?.homeTeamId));
-  const awayInnings = [inn1, inn2].find((i) => i?.teamId === String(match?.awayTeamId));
+  // The hero follows batting order, not the fixture's home/away order.
+  const firstInningsTeam = match && inn1?.teamId === String(match.homeTeamId) ? match.homeTeam : match?.awayTeam;
+  const secondInningsTeam = match && inn2?.teamId === String(match.homeTeamId) ? match.homeTeam : match?.awayTeam;
   const activeForm = activeInnings === 1 ? inn1 : inn2;
   const activeBattingTeam = match && activeForm?.teamId === String(match.awayTeamId) ? match.awayTeam : match?.homeTeam;
   const activeBowlingTeam = match && activeBattingTeam?.id === match.homeTeamId ? match.awayTeam : match?.homeTeam;
@@ -966,19 +987,19 @@ export default function ScoreEntryPage() {
                 </div>
 
                 <div className="score-hero-teams">
-                  {/* HOME TEAM */}
+                  {/* FIRST-INNINGS TEAM */}
                   <div className="score-team-card">
-                    <TeamMark team={match.homeTeam} size="lg" />
+                    <TeamMark team={firstInningsTeam || match.homeTeam} size="lg" />
                     <div className="score-team-meta">
-                      <h3>{match.homeTeam.name}</h3>
+                      <h3>{firstInningsTeam?.name}</h3>
                       <div className="score-big-score">
-                        {homeInnings ? `${homeInnings.runs}/${homeInnings.wickets}` : "—/—"}
+                        {`${inn1.runs}/${inn1.wickets}`}
                       </div>
                       <div className="score-overs-tag">
-                        {homeInnings ? (
+                        {inn1 ? (
                           <>
-                            <Overs balls={Number(homeInnings.balls)} /> OVERS
-                            {Number(homeInnings.balls) > 0 && ` · CRR ${(Number(homeInnings.runs) / (Number(homeInnings.balls) / 6)).toFixed(2)}`}
+                            <Overs balls={Number(inn1.balls)} /> OVERS
+                            {Number(inn1.balls) > 0 && ` · CRR ${(Number(inn1.runs) / (Number(inn1.balls) / 6)).toFixed(2)}`}
                           </>
                         ) : (
                           "YET TO BAT"
@@ -995,19 +1016,19 @@ export default function ScoreEntryPage() {
                     </small>
                   </div>
 
-                  {/* AWAY TEAM */}
+                  {/* SECOND-INNINGS TEAM */}
                   <div className="score-team-card away">
-                    <TeamMark team={match.awayTeam} size="lg" />
+                    <TeamMark team={secondInningsTeam || match.awayTeam} size="lg" />
                     <div className="score-team-meta">
-                      <h3>{match.awayTeam.name}</h3>
+                      <h3>{secondInningsTeam?.name}</h3>
                       <div className="score-big-score">
-                        {awayInnings ? `${awayInnings.runs}/${awayInnings.wickets}` : "—/—"}
+                        {`${inn2.runs}/${inn2.wickets}`}
                       </div>
                       <div className="score-overs-tag">
-                        {awayInnings ? (
+                        {inn2 ? (
                           <>
-                            <Overs balls={Number(awayInnings.balls)} /> OVERS
-                            {Number(awayInnings.balls) > 0 && ` · CRR ${(Number(awayInnings.runs) / (Number(awayInnings.balls) / 6)).toFixed(2)}`}
+                            <Overs balls={Number(inn2.balls)} /> OVERS
+                            {Number(inn2.balls) > 0 && ` · CRR ${(Number(inn2.runs) / (Number(inn2.balls) / 6)).toFixed(2)}`}
                           </>
                         ) : (
                           "YET TO BAT"

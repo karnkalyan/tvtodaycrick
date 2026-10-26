@@ -1816,6 +1816,25 @@
   }
 
   let broadcastWs = null;
+  let lastDbStateVersion = '';
+
+  async function refreshStateFromDb(){
+    try{
+      const res = await fetch('/api/broadcast/state', { cache: 'no-store' });
+      if(!res.ok) return;
+      const data = await res.json();
+      const version = String(data?.updatedAt || '');
+      if(!data?.state || (version && version === lastDbStateVersion)) return;
+      lastDbStateVersion = version;
+      const prev = deepClone(state);
+      state = merge(defaults, data.state);
+      if (typeof window !== 'undefined' && window.location.pathname.includes('/output') && (!state.ui.graphic || state.ui.graphic === 'masterCard')) {
+        state.ui.graphic = 'anchorMaster';
+      }
+      render(prev, false);
+    }catch(e){}
+  }
+
   function connectWebSocket(){
     try{
       let wsUrl = '';
@@ -1842,6 +1861,7 @@
             console.log('[Broadcast GFX] Loaded DB state via WebSocket:', msg.state);
             const prev = deepClone(state);
             state = merge(defaults, msg.state);
+            lastDbStateVersion = '';
             render(prev, false);
             return;
           }
@@ -1860,21 +1880,7 @@
   }
 
   async function initFromDb(){
-    try{
-      const res = await fetch('/api/broadcast/state');
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.state) {
-          console.log('[Broadcast GFX] Restored DB state on refresh:', data.state);
-          const prev = deepClone(state);
-          state = merge(defaults, data.state);
-          if (typeof window !== 'undefined' && window.location.pathname.includes('/output') && (!state.ui.graphic || state.ui.graphic === 'masterCard')) {
-            state.ui.graphic = 'anchorMaster';
-          }
-          render(prev, false);
-        }
-      }
-    }catch(e){}
+    await refreshStateFromDb();
 
     try{
       const nplRes = await fetch('/api/broadcast/npl-data');
@@ -1914,6 +1920,9 @@
 
   connectWebSocket();
   initFromDb();
+  // Database polling is the cross-tab/cross-device fallback when the production
+  // WebSocket proxy is unavailable. It keeps every graphic aligned with score entry.
+  setInterval(refreshStateFromDb, 1500);
 
   render(null,false);applyAmbientState();startFpsMeter();
   if(preview)flashStatus('MANUAL CUE');

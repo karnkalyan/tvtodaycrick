@@ -51,3 +51,30 @@ test("the director score action does not automatically send a lower-third", () =
   assert.match(handler, /sendCue\("action", \{ name: actionName \}\)/);
   assert.doesNotMatch(handler, /eventLowerThird/);
 });
+
+test("clean graphics poll persisted state when WebSocket delivery is unavailable", () => {
+  const script = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
+
+  assert.match(script, /async function refreshStateFromDb/);
+  assert.match(script, /fetch\('\/api\/broadcast\/state', \{ cache: 'no-store' \}\)/);
+  assert.match(script, /setInterval\(refreshStateFromDb, 1500\)/);
+});
+
+test("broadcast director preserves incoming swapped teams instead of stale local teams", () => {
+  const page = readFileSync(new URL("../src/app/(dashboard)/broadcast/page.tsx", import.meta.url), "utf8");
+  const sender = page.slice(page.indexOf("const sendCue"), page.indexOf("// Cue functions"));
+  const loader = page.slice(page.indexOf("// Fetch NPL Database"), page.indexOf("// Helper to retrieve roster"));
+
+  assert.match(sender, /persistedMatch = \{ teamA, teamB, \.\.\.\(incoming\.match \|\| \{\}\) \}/);
+  assert.match(sender, /incoming\.fow !== undefined/);
+  assert.doesNotMatch(loader, /handleSelectFixture\(/);
+});
+
+test("broadcast match feed exposes innings team assignments and real zero-over scores", () => {
+  const route = readFileSync(new URL("../src/app/api/broadcast/npl-data/route.ts", import.meta.url), "utf8");
+
+  assert.match(route, /teamCode: innings\.teamId === m\.homeTeamId/);
+  assert.match(route, /activeInningsNumber: activeInnings\?\.inningsNumber \|\| 1/);
+  assert.match(route, /homeScore: scoreText\(homeInnings\)/);
+  assert.doesNotMatch(route, /inn1\.balls > 0[\s\S]{0,120}'20\.0'/);
+});
