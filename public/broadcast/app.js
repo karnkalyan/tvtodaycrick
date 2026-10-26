@@ -1838,9 +1838,6 @@
       lastDbStateVersion = version;
       const prev = deepClone(state);
       state = merge(defaults, data.state);
-      if (typeof window !== 'undefined' && window.location.pathname.includes('/output') && (!state.ui.graphic || state.ui.graphic === 'masterCard')) {
-        state.ui.graphic = 'anchorMaster';
-      }
       render(prev, false);
     }catch(e){}
   }
@@ -1943,12 +1940,6 @@
     setTimeout(() => {
       show(queryGraphic, false);
     }, 250);
-  } else if (typeof window !== 'undefined' && window.location.pathname.includes('/output')) {
-    setTimeout(() => {
-      if (!state.ui.graphic || state.ui.graphic === 'masterCard') {
-        show('anchorMaster', false);
-      }
-    }, 350);
   }
 
   const queryEvent = params.get('event');

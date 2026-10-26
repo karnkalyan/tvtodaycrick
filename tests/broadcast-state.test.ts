@@ -103,3 +103,12 @@ test("clean reset wipes lingering match runs and displays NPL logo without audio
   assert.match(outputCode, /playCricketSfx/);
 });
 
+test("broadcast output feed does not auto-play or forcefully trigger anchor master", () => {
+  const appJs = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
+
+  // Output path should never force anchorMaster or any layer into state or show calls
+  assert.doesNotMatch(appJs, /location\.pathname\.includes\('\/output'\)[\s\S]{0,100}anchorMaster/);
+  assert.doesNotMatch(appJs, /refreshStateFromDb[\s\S]{0,300}anchorMaster/);
+});
+
+

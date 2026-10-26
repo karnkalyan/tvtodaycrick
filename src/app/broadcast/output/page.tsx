@@ -1072,7 +1072,7 @@ export default function BroadcastOutputPage() {
       {/* GSAP & Anime.js for 120 FPS Rendering */}
       <Script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js" strategy="beforeInteractive" />
       <Script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js" strategy="beforeInteractive" />
-      <Script src="/broadcast/app.js?v=20261024_v13" strategy="afterInteractive" />
+      <Script src="/broadcast/app.js?v=20261026_v1" strategy="afterInteractive" />
     </>
   );
 }

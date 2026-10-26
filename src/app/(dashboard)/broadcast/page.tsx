@@ -2036,7 +2036,7 @@ export default function BroadcastControllerPage() {
           <div className={`studio-viewport chroma-${chromaMode}`}>
             <iframe
               ref={iframeRef}
-              src="/broadcast/output?scale=fit&v=20261024_v13"
+              src="/broadcast/output?scale=fit&v=20261026_v1"
               title="Live Broadcast Output Feed"
               loading="eager"
             />
