@@ -71,7 +71,12 @@ export function SeasonProvider({ children }: { children: React.ReactNode }) {
       .then((data) => {
         if (active) {
           setMetadata(data);
-          if (data.sourceProvider) setProvider(data.sourceProvider);
+          const savedPref = localStorage.getItem("npl-provider") as NplProvider | null;
+          if (savedPref === "cricnepal" || savedPref === "nplt20league") {
+            setProvider(savedPref);
+          } else if (data.sourceProvider) {
+            setProvider(data.sourceProvider);
+          }
           setLastSyncTime(new Date().toLocaleTimeString());
         }
       })
@@ -96,7 +101,12 @@ export function SeasonProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await api<NplSeason>(`/api/npl?season=${year}&view=summary`, { method: "POST" });
       setMetadata(data);
-      if (data.sourceProvider) setProvider(data.sourceProvider);
+      const savedPref = localStorage.getItem("npl-provider") as NplProvider | null;
+      if (savedPref === "cricnepal" || savedPref === "nplt20league") {
+        setProvider(savedPref);
+      } else if (data.sourceProvider) {
+        setProvider(data.sourceProvider);
+      }
       setLastSyncTime(new Date().toLocaleTimeString());
       setRevision((v) => v + 1);
     } catch (e) {
@@ -129,6 +139,7 @@ export function SeasonProvider({ children }: { children: React.ReactNode }) {
         // Save provider preference and load existing data; user clicks "Fetch Data" to start sync
         const data = await api<NplSeason>(`/api/npl?season=${year}&view=summary`);
         setMetadata(data);
+        setProvider(newProvider);
         setRevision((v) => v + 1);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to switch data source");

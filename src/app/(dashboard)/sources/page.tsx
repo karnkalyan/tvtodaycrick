@@ -21,22 +21,33 @@ export default function SourcesPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [selectedProvider, setSelectedProvider] = useState<NplProvider>(provider || "nplt20league");
+  const [selectedProvider, setSelectedProvider] = useState<NplProvider>(provider || "cricnepal");
 
   useEffect(() => {
     api<Settings>(`/api/npl/sources?season=${year}`)
       .then((data) => {
         setSettings(data);
-        setSelectedProvider(data.provider);
+        const resolvedProv = provider || data.provider || "cricnepal";
+        setSelectedProvider(resolvedProv);
       })
       .catch((e) => setError(e.message));
-  }, [year]);
+  }, [year, provider]);
 
   async function handleProviderSelect(prov: NplProvider) {
     setSelectedProvider(prov);
+    if (settings) {
+      const correctUrl = prov === "cricnepal"
+        ? (settings.sourceUrl && settings.sourceUrl.includes("cricnepal.com") ? settings.sourceUrl : settings.cricnepalUrl)
+        : settings.nplt20Url;
+      setSettings({
+        ...settings,
+        provider: prov,
+        sourceUrl: correctUrl,
+      });
+    }
     try {
       await switchProvider(prov);
-      setMessage(`Switched data source to ${prov === "nplt20league" ? "nplt20league.com" : "cricnepal.com"}. Data synchronized.`);
+      setMessage(`Switched data source to ${prov === "nplt20league" ? "nplt20league.com" : "cricnepal.com"}.`);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to switch data source");
@@ -45,11 +56,15 @@ export default function SourcesPage() {
 
   async function save() {
     try {
+      const urlToSave = selectedProvider === "cricnepal"
+        ? (settings?.sourceUrl && settings.sourceUrl.includes("cricnepal.com") ? settings.sourceUrl : settings?.cricnepalUrl)
+        : settings?.nplt20Url;
+
       await api(`/api/npl/sources?season=${year}`, {
         method: "PUT",
         body: jsonBody({
           provider: selectedProvider,
-          sourceUrl: selectedProvider === "nplt20league" ? settings?.nplt20Url : settings?.sourceUrl,
+          sourceUrl: urlToSave,
           secondaryUrl: settings?.secondaryUrl,
         }),
       });

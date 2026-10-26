@@ -729,22 +729,37 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
     let hasLive = false;
 
     // 1. PRIMARY: CricNepal Live Sync
-    const candidateMatches = await prisma.match.findMany({
+    // First prioritize matches that are currently marked LIVE, otherwise the next scheduled match
+    const liveMatches = await prisma.match.findMany({
       where: {
         tournament: { season: year },
-        status: { in: ["LIVE", "SCHEDULED"] },
+        status: "LIVE",
       },
-      orderBy: { startTime: "asc" },
-      take: 6,
     });
+
+    const candidateMatches =
+      liveMatches.length > 0
+        ? liveMatches
+        : await prisma.match.findMany({
+            where: {
+              tournament: { season: year },
+              status: "SCHEDULED",
+            },
+            orderBy: { startTime: "asc" },
+            take: 2,
+          });
 
     for (const m of candidateMatches) {
       let sourceUrl = "";
       if (m.notes) {
-        const matchUrlLine = m.notes.match(/Source:\s*(https:\/\/[^\s]+cricnepal\.com\/match\/[^\s]+)/i);
+        const matchUrlLine = m.notes.match(/Source:\s*(https?:\/\/[^\s]+cricnepal\.com\/match\/[^\s\r\n]+)/i);
         if (matchUrlLine) sourceUrl = matchUrlLine[1].trim();
       }
-      if (!sourceUrl && year === "2026" && (m.matchNumber === "Season3-M1" || m.matchNumber === "Match 1" || m.title.includes("Lumbini"))) {
+      if (
+        !sourceUrl &&
+        year === "2026" &&
+        (m.matchNumber === "Season3-M1" || m.matchNumber === "Match 1" || m.title.toLowerCase().includes("lumbini"))
+      ) {
         sourceUrl = "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
       }
 
@@ -757,7 +772,9 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
             if (parsed.status === "LIVE") hasLive = true;
           }
         } catch (err) {
-          console.warn(`[NplService] CricNepal sync skipped for match ${m.id}:`, err instanceof Error ? err.message : err);
+          // Silent or concise log to avoid log spamming
+          const msg = (err as any)?.cause?.message || (err instanceof Error ? err.message : String(err));
+          console.warn(`[NplService] CricNepal sync skipped for match ${m.id} (${sourceUrl}):`, msg);
         }
       }
     }

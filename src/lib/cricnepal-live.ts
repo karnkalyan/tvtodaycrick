@@ -1,5 +1,6 @@
 import { load } from "cheerio";
 import { prisma } from "./prisma";
+import { fetchSource } from "./npl-source";
 import type { Prisma } from "@prisma/client";
 
 export interface CricNepalParsedLiveMatch {
@@ -333,21 +334,34 @@ export function parseCricNepalMatchHtml(html: string, sourceUrl = ""): CricNepal
  * Fetches and parses a CricNepal live match from the given URL.
  */
 export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNepalParsedLiveMatch | null> {
-  const response = await fetch(matchUrl, {
-    cache: "no-store",
-    signal: AbortSignal.timeout(20000),
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 NPL-TVToday/1.0",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`CricNepal match page returned HTTP ${response.status}: ${matchUrl}`);
+  let cleanUrl = matchUrl.trim();
+  try {
+    const u = new URL(cleanUrl);
+    u.protocol = "https:";
+    cleanUrl = u.href;
+  } catch {
+    return null;
   }
 
-  const html = await response.text();
-  return parseCricNepalMatchHtml(html, matchUrl);
+  try {
+    const html = await fetchSource(cleanUrl);
+    return parseCricNepalMatchHtml(html, cleanUrl);
+  } catch (err) {
+    // If fetch failed, try one direct fallback
+    const response = await fetch(cleanUrl, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(12000),
+      headers: {
+        "User-Agent": "NPL-TVToday/1.0 (cricket data reader)",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${cleanUrl}`);
+    }
+    const html = await response.text();
+    return parseCricNepalMatchHtml(html, cleanUrl);
+  }
 }
 
 /**

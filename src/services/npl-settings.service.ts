@@ -53,20 +53,18 @@ export async function saveSourceSettings(year: string, body: unknown): Promise<N
     secondaryUrl?: unknown;
   };
 
+  let chosenProvider = data.provider || (data.sourceUrl ? detectProvider(String(data.sourceUrl)) : "cricnepal");
   let targetUrl = typeof data.sourceUrl === "string" ? data.sourceUrl.trim() : "";
-  let chosenProvider = data.provider;
 
-  if (chosenProvider === "nplt20league") {
-    targetUrl = DEFAULT_NPLT20_URL;
-  } else if (chosenProvider === "cricnepal") {
+  if (chosenProvider === "cricnepal") {
     if (!targetUrl || !targetUrl.includes("cricnepal.com")) {
       targetUrl = config.sourceUrl;
     }
-  } else if (targetUrl) {
-    chosenProvider = detectProvider(targetUrl);
-  } else {
-    chosenProvider = "nplt20league";
+  } else if (chosenProvider === "nplt20league") {
     targetUrl = DEFAULT_NPLT20_URL;
+  } else {
+    chosenProvider = "cricnepal";
+    targetUrl = config.sourceUrl;
   }
 
   // Validate format
@@ -95,6 +93,22 @@ export async function saveSourceSettings(year: string, body: unknown): Promise<N
     create: { season: year, sourceUrl: targetUrl, secondaryUrl },
     update: { sourceUrl: targetUrl, secondaryUrl },
   });
+
+  // Also update nplSourceSnapshot payload so cached reads report chosenProvider
+  try {
+    const snapshot = await prisma.nplSourceSnapshot.findUnique({ where: { season: year } });
+    if (snapshot && typeof snapshot.payload === "object" && snapshot.payload !== null) {
+      const payload = snapshot.payload as any;
+      payload.sourceProvider = chosenProvider;
+      payload.sourceUrl = targetUrl;
+      await prisma.nplSourceSnapshot.update({
+        where: { season: year },
+        data: { payload },
+      });
+    }
+  } catch {
+    // optional
+  }
 
   return getSourceSettings(year);
 }
