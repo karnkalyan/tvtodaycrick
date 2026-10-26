@@ -11,7 +11,20 @@ try {
     new Agent({
       connect: {
         lookup: (hostname, options, callback) => {
-          dns.lookup(hostname, { ...options, family: 4, all: false }, callback);
+          const cb = typeof options === "function" ? options : callback;
+          const opts = typeof options === "object" && options !== null ? options : {};
+
+          dns.lookup(hostname, { ...opts, family: 4 }, (err, addresses, family) => {
+            if (err) return cb(err);
+            if (opts.all) {
+              const arr = Array.isArray(addresses)
+                ? addresses
+                : [{ address: addresses, family: family || 4 }];
+              return cb(null, arr);
+            }
+            const addr = Array.isArray(addresses) ? addresses[0]?.address : addresses;
+            return cb(null, addr, family || 4);
+          });
         },
         timeout: 15000,
       },
