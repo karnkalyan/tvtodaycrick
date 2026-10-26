@@ -138,6 +138,18 @@ const TOKEN_EVENT: Record<string, DeliveryEvent> = {
   "0": "dot", "1": "run1", "2": "run2", "3": "run3", "4": "four", "6": "six", W: "wicket", WD: "wide", NB: "noBall",
 };
 
+const NEPALI_EVENT_VOICE: Record<DeliveryEvent, string> = {
+  dot: "डट बल",
+  run1: "एक रन",
+  run2: "दुई रन",
+  run3: "तीन रन",
+  four: "चौका!",
+  six: "छक्का!",
+  wicket: "विकेट!",
+  wide: "वाइड बल",
+  noBall: "नो बल",
+};
+
 function mergeState(current: BroadcastState, incoming?: BroadcastState | null): BroadcastState {
   if (!incoming) return current;
   return {
@@ -195,7 +207,7 @@ function playerImageSources(team: { slug: string }, player: NplPlayer | undefine
   ].filter((value): value is string => Boolean(value))));
 }
 
-export default function KashtrixOutput() {
+export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena" | "editorial" }) {
   const [state, setState] = useState<BroadcastState>(DEFAULT_STATE);
   const [teams, setTeams] = useState<NplTeam[]>([]);
   const [connected, setConnected] = useState(false);
@@ -205,8 +217,29 @@ export default function KashtrixOutput() {
   const connectedRef = useRef(false);
   const stateRef = useRef(state);
   const pollReady = useRef(false);
+  const crowdAudio = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => { stateRef.current = state; }, [state]);
+
+  const announceEvent = useCallback((type: DeliveryEvent) => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(NEPALI_EVENT_VOICE[type]);
+    const voices = window.speechSynthesis.getVoices();
+    utterance.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith("ne"))
+      || voices.find((voice) => voice.lang.toLowerCase().startsWith("hi"))
+      || voices.find((voice) => voice.lang.toLowerCase().startsWith("en"))
+      || null;
+    utterance.lang = utterance.voice?.lang || "ne-NP";
+    utterance.rate = 0.82;
+    utterance.pitch = 0.78;
+    utterance.volume = 1;
+    const restoreCrowd = () => { if (crowdAudio.current) crowdAudio.current.volume = 0.14; };
+    if (crowdAudio.current) crowdAudio.current.volume = 0.045;
+    utterance.onend = restoreCrowd;
+    utterance.onerror = restoreCrowd;
+    window.speechSynthesis.speak(utterance);
+  }, []);
 
   const playEvent = useCallback((type: DeliveryEvent) => {
     const now = Date.now();
@@ -214,8 +247,28 @@ export default function KashtrixOutput() {
     lastEvent.current = { type, at: now };
     if (eventTimer.current) clearTimeout(eventTimer.current);
     setEvent({ type, key: now });
+    announceEvent(type);
     const major = type === "six" || type === "four" || type === "wicket";
     eventTimer.current = setTimeout(() => setEvent(null), major ? 3300 : 2500);
+  }, [announceEvent]);
+
+  useEffect(() => {
+    const audio = crowdAudio.current;
+    if (!audio) return;
+    audio.volume = 0.14;
+    const start = () => { void audio.play().catch(() => undefined); };
+    const resumeVisible = () => { if (!document.hidden) start(); };
+    start();
+    window.addEventListener("pointerdown", start, { once: true });
+    window.addEventListener("keydown", start, { once: true });
+    document.addEventListener("visibilitychange", resumeVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", resumeVisible);
+      window.removeEventListener("pointerdown", start);
+      window.removeEventListener("keydown", start);
+      audio.pause();
+      window.speechSynthesis?.cancel();
+    };
   }, []);
 
   const applyIncomingState = useCallback((incoming?: BroadcastState | null, inferDelivery = false) => {
@@ -361,8 +414,59 @@ export default function KashtrixOutput() {
     "--team-b-accent": teamB.secondary,
   }) as React.CSSProperties, [teamA.primary, teamA.secondary, teamB.primary, teamB.secondary]);
 
+  const audioBed = <audio ref={crowdAudio} src="/audio/kashtrix/stadium-crowd.ogg" autoPlay loop preload="auto" aria-hidden="true" />;
+
+  if (variant === "editorial") {
+    return (
+      <main className={styles.editorialOutput} style={theme}>
+        {audioBed}
+        <div className={styles.editorialTexture} aria-hidden="true" />
+        <header className={styles.editorialHeader}>
+          <div className={styles.editorialBrand}><Trophy /><div><small>NEPAL PREMIER LEAGUE</small><strong>KASHTRIX MATCHBOARD</strong></div></div>
+          <div className={styles.editorialInnings}>{state.live?.innings || "MATCH SCHEDULED"}</div>
+          <div className={styles.editorialLive}><i className={connected ? styles.connected : undefined} /> {connected ? "LIVE" : "SYNCING"} <Radio /></div>
+        </header>
+
+        <section className={styles.editorialTeams}>
+          <div className={styles.editorialTeamA}><ImageWithFallback src={teamA.logo} alt={`${teamA.name} crest`} className={styles.editorialLogo} fallback={<Shield />} /><span>BATTING · {teamA.code}</span><strong>{teamA.name}</strong></div>
+          <div className={styles.editorialVersus}>MATCH<br />CENTRE</div>
+          <div className={styles.editorialTeamB}><span>BOWLING · {teamB.code}</span><strong>{teamB.name}</strong><ImageWithFallback src={teamB.logo} alt={`${teamB.name} crest`} className={styles.editorialLogo} fallback={<Shield />} /></div>
+        </section>
+
+        <section className={`${styles.editorialPlayer} ${styles.editorialBatter}`}>
+          <div className={styles.editorialPlayerNumber}>01</div>
+          <ImageWithFallback src={playerImageSources(teamA, striker, state.live?.strikerName)} alt={state.live?.strikerName || "Striker"} className={styles.editorialPlayerImage} fallback={<div className={styles.editorialFallback}><UserRound /><b>{initials(state.live?.strikerName)}</b></div>} />
+          <div className={styles.editorialPlayerCopy}><span><Zap /> ON STRIKE</span><strong>{state.live?.strikerName || "BATTER"}</strong><small>{striker?.role?.replace(/_/g, " ") || "BATTER"}</small><div><b>{state.live?.strikerRuns || "0"}<em>RUNS</em></b><b>{state.live?.strikerBalls || "0"}<em>BALLS</em></b></div></div>
+        </section>
+
+        <section className={styles.editorialScore}>
+          <div className={styles.editorialScoreLabel}><CircleDot /> LIVE SCORE <b>{teamA.code}</b></div>
+          <div className={styles.editorialScoreValue}><strong>{runs}</strong><span>/</span><b>{wickets}</b></div>
+          <div className={styles.editorialOvers}>{overs} <span>OVERS</span></div>
+          <div className={styles.editorialMetrics}><StatPill icon={<Gauge />} label="CRR" value={rate(runs, overs)} /><StatPill icon={<Target />} label={target > 0 ? "TARGET" : "INN"} value={target > 0 ? String(target) : String(state.match?.inningsNumber || 1)} /><StatPill icon={<Zap />} label={required !== null ? "NEED" : "IN HAND"} value={required !== null ? String(required) : String(Math.max(0, 10 - wickets))} /></div>
+          <div className={styles.editorialRecent}><span>THIS OVER</span><div>{recent.slice(-8).map((ball, index) => <Ball key={`${ball}-${index}`} value={ball} index={index} />)}</div></div>
+        </section>
+
+        <section className={`${styles.editorialPlayer} ${styles.editorialBowler}`}>
+          <div className={styles.editorialPlayerNumber}>02</div>
+          <ImageWithFallback src={playerImageSources(teamB, bowler, state.live?.bowlerName)} alt={state.live?.bowlerName || "Bowler"} className={styles.editorialPlayerImage} fallback={<div className={styles.editorialFallback}><UserRound /><b>{initials(state.live?.bowlerName)}</b></div>} />
+          <div className={styles.editorialPlayerCopy}><span><CircleDot /> CURRENT BOWLER</span><strong>{state.live?.bowlerName || "BOWLER"}</strong><small>{bowler?.role?.replace(/_/g, " ") || "BOWLER"}</small><div><b>{state.live?.bowlerFigures || "0/0"}<em>FIGURES</em></b><b>{state.live?.bowlerOvers || "0.0"}<em>OVERS</em></b></div></div>
+        </section>
+
+        <section className={styles.editorialTicker}>
+          <div><span>NON-STRIKER</span><strong>{state.live?.nonStrikerName || "NON-STRIKER"} · {state.live?.nonStrikerRuns || "0"} ({state.live?.nonStrikerBalls || "0"})</strong></div>
+          <div><span>MATCH EQUATION</span><strong>{state.live?.requirement || "MATCH SCHEDULED"}</strong></div>
+          <div><span>MATCH PULSE</span><strong>{state.live?.rateText || `CRR ${rate(runs, overs)}`}</strong></div>
+        </section>
+        <footer className={styles.editorialFooter}><span><MapPin /> {state.live?.venue || "TU INTERNATIONAL CRICKET GROUND"}</span><span><Clock3 /> {state.live?.tossText || "TOSS NOT YET RECORDED"}</span><b>NPL 2026</b></footer>
+        <EventStinger event={event} presentation={presentation} team={teamA} runs={runs} wickets={wickets} overs={overs} />
+      </main>
+    );
+  }
+
   return (
     <main className={styles.output} style={theme}>
+      {audioBed}
       <div className={styles.virtualSet} aria-hidden="true" />
       <div className={styles.setShade} aria-hidden="true" />
       <div className={styles.lightBeams} aria-hidden="true"><i /><i /><i /></div>
@@ -463,27 +567,22 @@ export default function KashtrixOutput() {
         <div><Shield size={15} /><span>NPL 2026</span></div>
       </footer>
 
-      {event && presentation && (
-        <section key={event.key} className={`${styles.stinger} ${styles[presentation.className]}`} aria-live="assertive">
-          <div className={styles.stingerBackdrop} /><div className={styles.stingerSweep} />
-          <div className={styles.stingerRings}><i /><i /><i /></div>
-          <div className={styles.flightPath}><span className={styles.cricketBall} /></div>
-          <div className={styles.wicketRig}><i /><i /><i /><b /><b /></div>
-          <div className={styles.stingerTeam}>
-            <ImageWithFallback src={teamA.logo} alt="" className={styles.stingerLogo} fallback={<Shield size={72} />} />
-            <span>{teamA.code}</span>
-          </div>
-          <div className={styles.stingerCopy}>
-            <span>{presentation.kicker}</span>
-            <div className={styles.stingerTitle}><b>{presentation.value}</b><h1>{presentation.title}</h1></div>
-            <p>{presentation.detail}</p>
-            <div className={styles.stingerScore}>{runs}/{wickets}<span>{overs} OVERS</span></div>
-          </div>
-          <div className={styles.speedLines}>{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</div>
-        </section>
-      )}
+      <EventStinger event={event} presentation={presentation} team={teamA} runs={runs} wickets={wickets} overs={overs} />
     </main>
   );
+}
+
+function EventStinger({ event, presentation, team, runs, wickets, overs }: { event: { type: DeliveryEvent; key: number } | null; presentation: EventPresentation | null; team: { logo: string; code: string }; runs: number; wickets: number; overs: string }) {
+  if (!event || !presentation) return null;
+  return <section key={event.key} className={`${styles.stinger} ${styles[presentation.className]}`} aria-live="assertive">
+    <div className={styles.stingerBackdrop} /><div className={styles.stingerSweep} />
+    <div className={styles.stingerRings}><i /><i /><i /></div>
+    <div className={styles.flightPath}><span className={styles.cricketBall} /></div>
+    <div className={styles.wicketRig}><i /><i /><i /><b /><b /></div>
+    <div className={styles.stingerTeam}><ImageWithFallback src={team.logo} alt="" className={styles.stingerLogo} fallback={<Shield size={72} />} /><span>{team.code}</span></div>
+    <div className={styles.stingerCopy}><span>{presentation.kicker}</span><div className={styles.stingerTitle}><b>{presentation.value}</b><h1>{presentation.title}</h1></div><p>{presentation.detail}</p><div className={styles.stingerScore}>{runs}/{wickets}<span>{overs} OVERS</span></div></div>
+    <div className={styles.speedLines}>{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</div>
+  </section>;
 }
 
 function StatPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {

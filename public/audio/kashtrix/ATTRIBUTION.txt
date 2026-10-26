@@ -1,0 +1,10 @@
+Stadium ambience
+
+File: stadium-crowd.ogg
+Title: WWS FootballAustriavs.Sweden.ogg
+Creator: Work With Sounds / Torsten Nilsson
+Source: https://commons.wikimedia.org/wiki/File:WWS_FootballAustriavs.Sweden.ogg
+License: Creative Commons Attribution 4.0 International
+License URL: https://creativecommons.org/licenses/by/4.0/
+
+The recording is used unmodified as a low-volume looping stadium ambience.
