@@ -969,7 +969,7 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
           try { parsed = await fetchOnlineKhabarLiveMatch(okUrl); } catch {}
         }
       } else {
-        // Default (cricnepal): try CricNepal first
+        // Default (cricnepal): try CricNepal first, fallback to OnlineKhabar
         if (cnUrl) {
           try {
             parsed = await fetchCricNepalLiveMatch(cnUrl);
@@ -980,6 +980,31 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
             parsed = await fetchOnlineKhabarLiveMatch(okUrl);
           } catch {}
         }
+      }
+
+      // Cross-enrich: If we have basic score from CricNepal, enrich with ball-by-ball,
+      // fall-of-wickets, and player scorecard from OnlineKhabar if available
+      if (parsed && okUrl && (!parsed.playerPerformances?.length || !parsed.fowByInnings)) {
+        try {
+          const okData = await fetchOnlineKhabarLiveMatch(okUrl);
+          if (okData) {
+            if (okData.playerPerformances?.length && !parsed.playerPerformances?.length) {
+              parsed.playerPerformances = okData.playerPerformances;
+            }
+            if (okData.fowByInnings && !parsed.fowByInnings) {
+              parsed.fowByInnings = okData.fowByInnings;
+            }
+            if (okData.oversByInnings && !parsed.oversByInnings) {
+              parsed.oversByInnings = okData.oversByInnings;
+            }
+            if (okData.recentDeliveries?.length && !parsed.recentDeliveries?.length) {
+              parsed.recentDeliveries = okData.recentDeliveries;
+            }
+            if (okData.resultSummary && !parsed.resultSummary) {
+              parsed.resultSummary = okData.resultSummary;
+            }
+          }
+        } catch {}
       }
 
       // If still not parsed, try NPLT20 snapshot as universal fallback

@@ -532,17 +532,9 @@
     const ps = $('#profileStats'); if(ps) ps.innerHTML=state.profile.map(r=>`<div><span>${r[0]}</span><b>${r[1]}</b></div>`).join('');
     const cr = $('#compareRows'); if(cr) cr.innerHTML=state.compare.map(r=>`<div class="compare-row"><span>${r[1]}</span><b>${r[0]}</b><span>${r[2]}</span></div>`).join('');
     
-    // Dynamic Fall of Wickets for batting team (strictly ensuring correct team players)
+    // Dynamic Fall of Wickets for batting team
     let activeFow = state.fow;
-    const isTeamFowValid = Array.isArray(activeFow) && activeFow.length >= state.score.wickets && activeFow.every(f => {
-      const fScore = parseInt((f[0] || '').split('/')[1] || '0', 10);
-      const fPlayer = String(f[1] || '').toUpperCase();
-      return fScore <= state.score.runs && Array.isArray(a.roster) && a.roster.some(r => {
-        const rNorm = String(r).toUpperCase();
-        return rNorm.includes(fPlayer) || fPlayer.includes(rNorm);
-      });
-    });
-    if (!isTeamFowValid || !Array.isArray(activeFow) || activeFow.length === 0) {
+    if (!Array.isArray(activeFow) || (activeFow.length === 0 && Number(state.score.wickets) > 0)) {
       activeFow = getContextualFow(a, state.score.runs, state.score.wickets, state.score.overs, state.live.strikerName, state.live.nonStrikerName);
     }
     const fr = $('#fowRows'); if(fr) fr.innerHTML=activeFow.map(r=>`<div class="fow-row"><strong>${r[0]}</strong><b>${r[1]}</b><span>${r[2]}</span></div>`).join('');
@@ -611,6 +603,7 @@
 
   function renderRecent(){
     const isScheduled = (state.score.overs === '0.0' || state.score.overs === '0' || !state.score.overs) && (Number(state.score.runs) === 0 || !state.score.runs) || (state.live?.innings && state.live.innings.toUpperCase().includes('SCHEDULED'));
+    const isCompleted = (state.live?.innings && state.live.innings.toUpperCase().includes('COMPLETED')) || (state.live?.rateText && state.live.rateText.toUpperCase().includes('FINAL RESULT'));
     const balls = isScheduled ? ['-', '-', '-', '-', '-', '-'] : (state.score.recent || []);
     const html=balls.map(v=>`<i class="${v==='4'?'four':v==='6'?'six':v==='W'?'wicket':/WD|NB/.test(v)?'extra':''}">${v}</i>`).join('');
     const el1=$('#recentBalls'); if(el1)el1.innerHTML=html;
@@ -620,6 +613,8 @@
     if (ovRem) {
       if (isScheduled) {
         ovRem.textContent = 'FIRST OVER PENDING';
+      } else if (isCompleted) {
+        ovRem.textContent = 'MATCH COMPLETED';
       } else {
         const legalBallsInOver = balls.filter(b => b !== '-' && !/WD|NB/.test(b)).length;
         ovRem.textContent = `${Math.max(0, 6 - legalBallsInOver)} BALLS REMAINING`;
@@ -627,7 +622,7 @@
     }
     const ovProg = $('#masterOverProgressTitle');
     if (ovProg) {
-      ovProg.textContent = isScheduled ? 'OVER 1 PENDING' : `OVER ${Math.floor(parseFloat(state.score.overs) || 0) + 1} IN PROGRESS`;
+      ovProg.textContent = isScheduled ? 'OVER 1 PENDING' : isCompleted ? `INNINGS COMPLETED · ${state.score.overs} OV` : `OVER ${Math.floor(parseFloat(state.score.overs) || 0) + 1} IN PROGRESS`;
     }
   }
 
@@ -700,7 +695,7 @@
         winProbB = 100 - winProbA;
       }
     } else if (isCompleted) {
-      crr = 'FINAL';
+      crr = totalBalls > 0 ? ((s.runs / (totalBalls / 6))).toFixed(2) : 'FINAL';
       projected = s.runs;
       rrr = '-';
     }
@@ -1161,6 +1156,8 @@
           if(p.score.runs !== undefined) state.score.runs = Number(p.score.runs) || 0;
           if(p.score.wickets !== undefined) state.score.wickets = Number(p.score.wickets) || 0;
           if(p.score.overs !== undefined) state.score.overs = String(p.score.overs);
+          if(Array.isArray(p.score.recent)) state.score.recent = p.score.recent;
+          if(p.score.target !== undefined) state.score.target = p.score.target;
         }
         if(p.live){
           Object.assign(state.live, p.live);
@@ -1168,12 +1165,14 @@
         if(p.points && Array.isArray(p.points)){
           state.points = p.points;
         }
-        if(p.fow){
+        if(p.fow && Array.isArray(p.fow)){
           state.fow = p.fow;
         } else if(p.match && p.match.teamA) {
           const a = team(state.match.teamA);
           state.fow = getContextualFow(a, state.score.runs, state.score.wickets, state.score.overs, state.live.strikerName, state.live.nonStrikerName);
         }
+        if(p.summary && Array.isArray(p.summary)) state.summary = p.summary;
+        if(p.bowling && Array.isArray(p.bowling)) state.bowling = p.bowling;
         applyTeamTheme();
         // In-place update without re-animating or flickering the master card
         renderLists();

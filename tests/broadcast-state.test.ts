@@ -111,4 +111,64 @@ test("broadcast output feed does not auto-play or forcefully trigger anchor mast
   assert.doesNotMatch(appJs, /refreshStateFromDb[\s\S]{0,300}anchorMaster/);
 });
 
+test("buildBroadcastStateFromMatch accurately reflects completed match score, FOW, and overs to graphics", async () => {
+  const { buildBroadcastStateFromMatch } = await import("../src/lib/broadcast-state");
+
+  const mockMatch = {
+    id: 85,
+    title: "Lumbini Lions vs Sudurpaschim Royals",
+    matchNumber: "Match 1",
+    status: "COMPLETED",
+    resultText: "Lumbini Lions won by 7 wickets",
+    venue: "TU Cricket Ground, Kirtipur",
+    homeTeamId: 6,
+    awayTeamId: 8,
+    homeTeam: { id: 6, name: "Lumbini Lions", shortName: "LL" },
+    awayTeam: { id: 8, name: "Sudurpaschim Royals", shortName: "SR" },
+    innings: [
+      { id: 101, inningsNumber: 1, teamId: 8, runs: 87, wickets: 10, balls: 104, extras: 6, status: "COMPLETED" },
+      { id: 102, inningsNumber: 2, teamId: 6, runs: 88, wickets: 3, balls: 59, extras: 4, status: "COMPLETED", target: 88 },
+    ],
+    toss: { winnerTeamId: 6, decision: "BOWL" },
+    stats: [
+      { id: 1, innings: 2, teamId: 6, isOut: true, runs: 19, ballsFaced: 10, fours: 3, sixes: 0, player: { displayName: "Aasif Sheikh" } },
+      { id: 2, innings: 2, teamId: 6, isOut: true, runs: 20, ballsFaced: 14, fours: 2, sixes: 1, player: { displayName: "Abhishesh Gautam" } },
+      { id: 3, innings: 2, teamId: 6, isOut: true, runs: 18, ballsFaced: 12, fours: 1, sixes: 1, player: { displayName: "Ajay Chauhan" } },
+      { id: 4, innings: 2, teamId: 6, isOut: false, runs: 24, ballsFaced: 18, fours: 2, sixes: 0, player: { displayName: "Rohit Paudel" } },
+      { id: 5, innings: 2, teamId: 8, isOut: false, ballsBowled: 12, runsConceded: 16, wickets: 1, maidens: 0, player: { displayName: "Abinash Bohara" } },
+    ],
+  };
+
+  const parsedLive = {
+    recentDeliveries: ["W", "0", "1", "1", "4"],
+    resultSummary: "Lumbini won by 7 wickets",
+    fowByInnings: {
+      2: [
+        ["1/19", "AASIF SHEIKH", "1.4 OV"],
+        ["2/39", "ABHISHESH GAUTAM", "3.6 OV"],
+        ["3/57", "AJAY CHAUHAN", "5.9 OV"],
+      ],
+    },
+  };
+
+  const state = buildBroadcastStateFromMatch(mockMatch, parsedLive);
+  const matchObj = state.match as any;
+  const scoreObj = state.score as any;
+  const liveObj = state.live as any;
+  const fow = state.fow as any[];
+
+  assert.equal(matchObj.teamA, "LUL");
+  assert.equal(matchObj.teamB, "SPR");
+  assert.equal(scoreObj.runs, 88);
+  assert.equal(scoreObj.wickets, 3);
+  assert.equal(scoreObj.overs, "9.5");
+  assert.deepEqual(scoreObj.recent, ["W", "0", "1", "1", "4"]);
+  assert.equal(liveObj.rateText, "FINAL RESULT");
+  assert.equal(fow.length, 3);
+  assert.equal(fow[0][0], "1/19");
+  assert.equal(fow[1][0], "2/39");
+  assert.equal(fow[2][0], "3/57");
+});
+
+
 

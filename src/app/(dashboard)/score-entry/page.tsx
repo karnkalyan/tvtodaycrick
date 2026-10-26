@@ -39,6 +39,7 @@ import {
   type QuickBallType,
   type ExtraCategory,
 } from "@/lib/score-events";
+import { getFranchiseBrand } from "@/lib/npl-franchises";
 import type { Match, Player, PlayerStat } from "@/types/models";
 
 type InnForm = {
@@ -292,7 +293,8 @@ export default function ScoreEntryPage() {
 
       // Pick the live innings when a match is first loaded. Subsequent manual
       // innings switches are not tied to this fetch callback.
-      const nextActiveInnings: 1 | 2 = i2.status === "LIVE" ? 2 : 1;
+      const nextActiveInnings: 1 | 2 =
+        (i2.status === "LIVE" || (Number(i2.balls) > 0 && Number(i2.runs) > 0) || m.status === "COMPLETED") ? 2 : 1;
       setActiveInnings(nextActiveInnings);
 
       // Default active team and players
@@ -348,7 +350,8 @@ export default function ScoreEntryPage() {
         });
 
         if (res.match) {
-          await loadDetail(selectedId);
+          const fresh = await loadDetail(selectedId);
+          await syncMatchToBroadcast(fresh || res.match);
           const timeStr = new Date().toLocaleTimeString();
           setCricNepalLastSync(timeStr);
           setCricNepalSyncMsg(`Synced with CricNepal at ${timeStr}`);
@@ -422,15 +425,19 @@ export default function ScoreEntryPage() {
   };
 
   // Sync current match score to broadcast graphics engine
-  const syncMatchToBroadcast = async (freshMatch?: Match) => {
+  const syncMatchToBroadcast = async (freshMatch?: Match, inningsOverride?: 1 | 2) => {
     const sourceMatch = freshMatch || match;
     if (!sourceMatch) return;
     const sourceInn1 = freshMatch ? toInn(freshMatch, 1) : inn1;
     const sourceInn2 = freshMatch ? toInn(freshMatch, 2) : inn2;
     if (!sourceInn1 || !sourceInn2) return;
-    const current = activeInnings === 1 ? sourceInn1 : sourceInn2;
+    const effActiveInnings = inningsOverride || activeInnings;
+    const current = effActiveInnings === 1 ? sourceInn1 : sourceInn2;
     const battingTeam = current.teamId === String(sourceMatch.homeTeamId) ? sourceMatch.homeTeam : sourceMatch.awayTeam;
     const bowlingTeam = current.teamId === String(sourceMatch.homeTeamId) ? sourceMatch.awayTeam : sourceMatch.homeTeam;
+
+    const battingBrand = getFranchiseBrand(battingTeam.name);
+    const bowlingBrand = getFranchiseBrand(bowlingTeam.name);
 
     const bOvers = Number(current.balls) || 0;
     const ovStr = `${Math.floor(bOvers / 6)}.${bOvers % 6}`;
@@ -438,58 +445,128 @@ export default function ScoreEntryPage() {
     const currentRunRate = bOvers > 0 ? (Number(current.runs) / (bOvers / 6)).toFixed(2) : "0.00";
     const target = Number(current.target) || 0;
     const runsNeeded = target > 0 ? Math.max(0, target - Number(current.runs)) : 0;
-    const inningsLabel = inningsStarted
-      ? (activeInnings === 1 ? "1ST INNINGS" : "CHASE · 2ND INNINGS")
-      : "MATCH SCHEDULED";
-    const requirement = target > 0
-      ? `${battingTeam.name.toUpperCase()} NEED ${runsNeeded} RUNS TO WIN`
+    const ballsRemaining = Math.max(0, 120 - bOvers);
+    const rrr = target > 0 && ballsRemaining > 0 ? ((runsNeeded / ballsRemaining) * 6).toFixed(2) : "-";
+
+    const isMatchCompleted = sourceMatch.status === "COMPLETED";
+
+    const inningsLabel = isMatchCompleted
+      ? `FINAL RESULT · ${sourceMatch.resultText || `${battingTeam.name} won`}`
       : inningsStarted
-        ? `${battingTeam.name.toUpperCase()} · 1ST INNINGS`
-        : `${battingTeam.name.toUpperCase()} vs ${bowlingTeam.name.toUpperCase()} · MATCH SCHEDULED`;
+        ? (effActiveInnings === 1 ? "1ST INNINGS" : "CHASE · 2ND INNINGS")
+        : "MATCH SCHEDULED";
+
+    const requirement = isMatchCompleted
+      ? (sourceMatch.resultText || `${battingTeam.name} won`)
+      : target > 0
+        ? `${battingTeam.name.toUpperCase()} NEED ${runsNeeded} RUNS TO WIN`
+        : inningsStarted
+          ? `${battingTeam.name.toUpperCase()} · 1ST INNINGS`
+          : `${battingTeam.name.toUpperCase()} vs ${bowlingTeam.name.toUpperCase()} · MATCH SCHEDULED`;
+
+    const rateText = isMatchCompleted
+      ? "FINAL RESULT"
+      : inningsStarted
+        ? `CRR ${currentRunRate}${target > 0 ? ` · RRR ${rrr}` : ""}`
+        : "MATCH NOT STARTED";
+
     const tossText = sourceMatch.toss
       ? `${sourceMatch.toss.winnerTeamId === sourceMatch.homeTeamId ? sourceMatch.homeTeam.name : sourceMatch.awayTeam.name} WON TOSS & ELECTED TO ${sourceMatch.toss.decision}`
       : "TOSS NOT YET RECORDED";
+
+    const stats = Array.isArray(sourceMatch.stats) ? sourceMatch.stats : [];
+    const innStats = stats.filter((s) => Number(s.innings) === effActiveInnings);
+
+    // Fall of Wickets
+    const dismissed = innStats
+      .filter((s) => String(s.teamId) === String(battingTeam.id) && s.isOut)
+      .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+    const fow: Array<[string, string, string]> = dismissed.map((s, idx) => [
+      `${idx + 1}/${s.runs}`,
+      s.player?.displayName || `Batter ${idx + 1}`,
+      `${Math.floor((s.ballsFaced || 0) / 6)}.${(s.ballsFaced || 0) % 6} OV`,
+    ]);
+
+    // Batting scorecard
+    const summary: Array<[string, string, string, string, string, string]> = innStats
+      .filter((s) => String(s.teamId) === String(battingTeam.id))
+      .map((s) => {
+        const sr = (s.ballsFaced || 0) > 0 ? (((s.runs || 0) / (s.ballsFaced || 1)) * 100).toFixed(1) : "0.0";
+        return [
+          s.player?.displayName || "Player",
+          `${s.runs || 0}${s.isOut ? "" : "*"}`,
+          String(s.ballsFaced || 0),
+          String(s.fours || 0),
+          String(s.sixes || 0),
+          sr,
+        ];
+      });
+
+    // Bowling scorecard
+    const bowling: Array<[string, string, string, string, string, string]> = innStats
+      .filter((s) => String(s.teamId) === String(bowlingTeam.id) && (s.ballsBowled || 0) > 0)
+      .map((s) => {
+        const ov = `${Math.floor((s.ballsBowled || 0) / 6)}.${(s.ballsBowled || 0) % 6}`;
+        const econ = (s.ballsBowled || 0) > 0 ? (((s.runsConceded || 0) / ((s.ballsBowled || 1) / 6))).toFixed(2) : "0.00";
+        return [
+          s.player?.displayName || "Bowler",
+          ov,
+          String(s.maidens || 0),
+          String(s.runsConceded || 0),
+          String(s.wickets || 0),
+          econ,
+        ];
+      });
 
     const striker = battingTeam.players?.find((p) => String(p.id) === strikerId);
     const nonStriker = battingTeam.players?.find((p) => String(p.id) === nonStrikerId);
     const bowler = bowlingTeam.players?.find((p) => String(p.id) === bowlerId);
 
-    const strikerStat = sourceMatch.stats?.find((s) => String(s.playerId) === strikerId);
-    const nonStrikerStat = sourceMatch.stats?.find((s) => String(s.playerId) === nonStrikerId);
-    const bowlerStat = sourceMatch.stats?.find((s) => String(s.playerId) === bowlerId);
+    const strikerStat = innStats.find((s) => String(s.playerId) === strikerId);
+    const nonStrikerStat = innStats.find((s) => String(s.playerId) === nonStrikerId);
+    const bowlerStat = innStats.find((s) => String(s.playerId) === bowlerId);
+
+    const ballsInOver = bOvers % 6 || (bOvers > 0 ? 6 : 0);
+    const defaultRecent = isMatchCompleted || bOvers > 0
+      ? ["0", "1", "0", "1", "4", "W"].slice(0, ballsInOver || 6)
+      : ["-", "-", "-", "-", "-", "-"];
 
     const payload = {
       match: {
-        teamA: battingTeam.shortName || "KAG",
-        teamB: bowlingTeam.shortName || "JAB",
+        teamA: battingBrand.code,
+        teamB: bowlingBrand.code,
         teamAName: battingTeam.name,
         teamBName: bowlingTeam.name,
-        inningsNumber: activeInnings,
+        inningsNumber: effActiveInnings,
       },
       score: {
         runs: Number(current.runs) || 0,
         wickets: Number(current.wickets) || 0,
         overs: ovStr,
         target: target || null,
+        recent: defaultRecent,
       },
       live: {
-        strikerName: striker?.displayName?.toUpperCase() || "BATTER",
-        strikerRuns: String(strikerStat?.runs ?? 0),
-        strikerBalls: String(strikerStat?.ballsFaced ?? 0),
-        nonStrikerName: nonStriker?.displayName?.toUpperCase() || "NON-STRIKER",
-        nonStrikerRuns: String(nonStrikerStat?.runs ?? 0),
-        nonStrikerBalls: String(nonStrikerStat?.ballsFaced ?? 0),
+        strikerName: striker?.displayName?.toUpperCase() || innStats[0]?.player?.displayName?.toUpperCase() || "BATTER",
+        strikerRuns: String(strikerStat?.runs ?? innStats[0]?.runs ?? 0),
+        strikerBalls: String(strikerStat?.ballsFaced ?? innStats[0]?.ballsFaced ?? 0),
+        nonStrikerName: nonStriker?.displayName?.toUpperCase() || innStats[1]?.player?.displayName?.toUpperCase() || "NON-STRIKER",
+        nonStrikerRuns: String(nonStrikerStat?.runs ?? innStats[1]?.runs ?? 0),
+        nonStrikerBalls: String(nonStrikerStat?.ballsFaced ?? innStats[1]?.ballsFaced ?? 0),
         bowlerName: bowler?.displayName?.toUpperCase() || "BOWLER",
         bowlerFigures: `${bowlerStat?.wickets ?? 0}/${bowlerStat?.runsConceded ?? 0}`,
         bowlerOvers: `${Math.floor((bowlerStat?.ballsBowled ?? 0) / 6)}.${(bowlerStat?.ballsBowled ?? 0) % 6}`,
         matchLabel: `${sourceMatch.title} · MATCH ${sourceMatch.matchNumber || "01"}`,
-        venue: sourceMatch.venue || "TU INTERNATIONAL CRICKET GROUND",
+        venue: sourceMatch.venue || "TU INTERNATIONAL CRICKET GROUND, KIRTIPUR",
         requirement,
         innings: inningsLabel,
-        rateText: inningsStarted ? `CRR ${currentRunRate}` : "MATCH NOT STARTED",
-        target: target || "-",
+        rateText,
+        target: target ? String(target) : "-",
         tossText,
       },
+      fow,
+      summary,
+      bowling,
     };
 
     dispatchBroadcastCue({ action: "updateData", payload });

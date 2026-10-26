@@ -98,13 +98,23 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
   const status: "SCHEDULED" | "LIVE" | "COMPLETED" | "ABANDONED" =
     stateAttr === "live"
       ? "LIVE"
-      : stateAttr === "completed" || stateAttr === "result"
+      : stateAttr === "completed" || stateAttr === "result" || stateAttr === "finished"
       ? "COMPLETED"
       : stateAttr === "upcoming"
       ? "SCHEDULED"
-      : "SCHEDULED";
+      : (data.state === "finished" || data.state === "completed" ? "COMPLETED" : "SCHEDULED");
 
   const venue = "TU Cricket Ground, Kirtipur";
+
+  // Result summary if completed
+  let resultSummary: string | undefined = undefined;
+  const tossOrResult = $score(".npl-score__toss").text().trim();
+  const directResult = $score(".npl-score__result").text().trim();
+  if (tossOrResult && /won by|tied|no result/i.test(tossOrResult)) {
+    resultSummary = tossOrResult;
+  } else if (directResult) {
+    resultSummary = directResult;
+  }
 
   // Teams
   const teamEls = $score(".npl-team");
@@ -146,6 +156,62 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
       notes: tossText,
     };
   }
+
+  // Fall of Wickets (by innings)
+  const fowByInnings: Record<number, Array<[string, string, string]>> = {};
+  [1, 2].forEach((innNum) => {
+    const fowHtml = data.regions?.[`fow-${innNum}`]?.html;
+    if (!fowHtml) return;
+    const $fow = load(fowHtml);
+    const rows: Array<[string, string, string]> = [];
+    $fow("table.npl-sc-table--fow tbody tr").each((_, tr) => {
+      const playerLink = $fow(tr).find(".npl-player-link").attr("href") || "";
+      const playerSlug = playerLink.split("/").filter(Boolean).pop() || "";
+      const rawName = $fow(tr).find(".npl-sc-player__name").text().trim();
+      const playerName = isNaN(Number(playerSlug)) && playerSlug ? slugToPlayerOrTeamName(playerSlug) : rawName;
+      const score = $fow(tr).find("td:nth-child(2)").text().trim();
+      const over = $fow(tr).find("td:nth-child(3)").text().trim();
+      if (score && over) {
+        const formattedScore = score.includes("-") ? score.replace("-", "/") : score;
+        rows.push([formattedScore, playerName, `${over} OV`]);
+      }
+    });
+    if (rows.length > 0) {
+      fowByInnings[innNum] = rows;
+    }
+  });
+
+  // Overs Summary with ball-by-ball deliveries
+  const oversByInnings: Record<number, Array<{ overNo: string; score: string; balls: string[] }>> = {};
+  let recentDeliveries: string[] = [];
+  [1, 2].forEach((innNum) => {
+    const oversHtml = data.regions?.[`overs-${innNum}`]?.html;
+    if (!oversHtml) return;
+    const $ov = load(oversHtml);
+    const oversList: Array<{ overNo: string; score: string; balls: string[] }> = [];
+    $ov("table.npl-sc-table--overs tbody tr").each((_, tr) => {
+      const overNo = $ov(tr).find(".npl-overs__no").text().trim();
+      const score = $ov(tr).find(".npl-overs__score").text().trim();
+      const balls: string[] = [];
+      $ov(tr).find(".npl-overs__balls li").each((_, li) => {
+        const text = $ov(li).text().trim();
+        const title = $ov(li).attr("title") || "";
+        if (text) balls.push(text);
+        else if ($ov(li).hasClass("npl-chip--dot") || title.includes("नो रन") || title.includes("Dot")) balls.push("0");
+        else if (title.includes("आउट") || title.includes("Wicket")) balls.push("W");
+        else balls.push(".");
+      });
+      if (balls.length > 0) {
+        oversList.push({ overNo, score, balls });
+      }
+    });
+    if (oversList.length > 0) {
+      oversByInnings[innNum] = oversList;
+      if (recentDeliveries.length === 0 && oversList[0]?.balls) {
+        recentDeliveries = oversList[0].balls;
+      }
+    }
+  });
 
   // Innings and Player Performances
   const innings: CricNepalParsedLiveMatch["innings"] = [];
@@ -254,7 +320,11 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
   const crrText = $score(".npl-score__rates").text().trim();
   const crr = parseFloat(crrText.replace(/[^0-9.]/g, "")) || 0;
 
-  const activeInnNum = innings.find((i) => i.status === "LIVE")?.inningsNumber || innings[0]?.inningsNumber || 1;
+  const activeInnNum = innings.find((i) => i.status === "LIVE")?.inningsNumber || (innings.length > 1 && status === "COMPLETED" ? 2 : (innings[0]?.inningsNumber || 1));
+  if (oversByInnings[activeInnNum]?.[0]?.balls?.length) {
+    recentDeliveries = oversByInnings[activeInnNum][0].balls;
+  }
+
   const currentBatters = playerPerformances
     .filter((p) => p.innings === activeInnNum && p.type === "BATSMAN" && p.batting.isNotOut)
     .map((p, idx) => ({
@@ -292,6 +362,7 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
     sourceUrl,
     title: `${homeTeam.name} vs ${awayTeam.name}`,
     status,
+    resultSummary,
     venue,
     homeTeam: { name: homeTeam.name },
     awayTeam: { name: awayTeam.name },
@@ -304,6 +375,9 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
       crr,
     },
     playerPerformances,
+    fowByInnings,
+    oversByInnings,
+    recentDeliveries,
   };
 }
 

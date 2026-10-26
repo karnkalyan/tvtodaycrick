@@ -3,6 +3,7 @@ import dns from "node:dns";
 import { prisma } from "./prisma";
 import { fetchSource } from "./npl-source";
 import type { Prisma } from "@prisma/client";
+import { syncMatchToBroadcastDb } from "./broadcast-state";
 
 import { ensureIpv4Dispatcher } from "./fetch-network";
 ensureIpv4Dispatcher();
@@ -98,6 +99,9 @@ export interface CricNepalParsedLiveMatch {
       economy: number;
     };
   }>;
+  fowByInnings?: Record<number, Array<[string, string, string]>>;
+  oversByInnings?: Record<number, Array<{ overNo: string; score: string; balls: string[] }>>;
+  recentDeliveries?: string[];
 }
 
 /**
@@ -438,7 +442,7 @@ export async function applyCricNepalMatchToDb(
   data: CricNepalParsedLiveMatch,
   options: { forceOverwrite?: boolean } = {}
 ) {
-  return prisma.$transaction(
+  const updated = await prisma.$transaction(
     async (tx) => {
       const match = await tx.match.findUnique({
         where: { id: matchId },
@@ -811,19 +815,48 @@ export async function applyCricNepalMatchToDb(
         }
       }
 
-      // Return refreshed match
-      return tx.match.findUnique({
+      // Return refreshed match and automatically update live broadcast graphics state
+      const refreshed = await tx.match.findUnique({
         where: { id: match.id },
         include: {
           tournament: true,
-          homeTeam: { include: { players: true } },
-          awayTeam: { include: { players: true } },
+          homeTeam: { include: { players: true, franchise: true } },
+          awayTeam: { include: { players: true, franchise: true } },
           toss: { include: { winnerTeam: true } },
           innings: { include: { team: true }, orderBy: { inningsNumber: "asc" } },
           stats: { include: { player: true, team: true } },
         },
       });
+
+      if (refreshed) {
+        try {
+          await syncMatchToBroadcastDb(tx, refreshed, data);
+        } catch (bsErr) {
+          console.warn("[BroadcastState] Could not auto-sync broadcast state:", bsErr);
+        }
+      }
+
+      return refreshed;
     },
     { timeout: 30000 }
   );
+
+  // Broadcast WebSocket notification to all active graphics screens
+  if (updated) {
+    try {
+      if (typeof (global as any).__npl_ws_broadcast === "function") {
+        const stateRecord = await (prisma as any).broadcastState.findUnique({ where: { id: "current" } });
+        if (stateRecord?.state) {
+          (global as any).__npl_ws_broadcast(JSON.stringify({
+            action: "updateData",
+            type: "updateData",
+            payload: stateRecord.state,
+            timestamp: Date.now(),
+          }));
+        }
+      }
+    } catch {}
+  }
+
+  return updated;
 }

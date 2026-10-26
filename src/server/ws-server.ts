@@ -104,6 +104,40 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
     (global as any).__npl_ws_broadcast(text);
   };
 
+  // Poll database broadcastState periodically so auto-synced match updates from
+  // Next.js or background sync immediately broadcast to all connected graphics
+  let lastDbTimestamp = 0;
+  const pollTimer = setInterval(async () => {
+    try {
+      const record = await (prisma as any).broadcastState.findUnique({
+        where: { id: "current" },
+      });
+      if (record?.state && record.updatedAt) {
+        const time = new Date(record.updatedAt).getTime();
+        if (lastDbTimestamp === 0) {
+          lastDbTimestamp = time;
+          latestState = record.state;
+        } else if (time > lastDbTimestamp) {
+          lastDbTimestamp = time;
+          latestState = record.state;
+          const msg = JSON.stringify({
+            action: "updateData",
+            type: "updateData",
+            payload: record.state,
+            timestamp: time,
+          });
+          wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(msg);
+            }
+          });
+        }
+      }
+    } catch {}
+  }, 1000);
+
+  wss.on("close", () => clearInterval(pollTimer));
+
   wss.on("connection", async (ws: WebSocket) => {
     // Always refresh latest state directly from MySQL database so clients never receive stale state
     try {
