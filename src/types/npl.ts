@@ -55,7 +55,7 @@ export type NplFixture = {
 export type NplSeason = {
   season: string;
   seasonNumber?: number;
-  sourceProvider?: "nplt20league" | "cricnepal";
+  sourceProvider?: "nplt20league" | "cricnepal" | "onlinekhabar";
   startDate?: string;
   endDate?: string;
   statistics?: {

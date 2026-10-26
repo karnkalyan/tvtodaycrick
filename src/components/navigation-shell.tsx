@@ -365,7 +365,7 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
             </button>
 
             {/* Provider Selector */}
-            <div className="navbar-provider-badge" title="Active Data Source: Switch between nplt20league.com (Recommended with HQ Assets) and cricnepal.com">
+            <div className="navbar-provider-badge" title="Active Data Source: Switch between nplt20league.com (HQ Assets), cricnepal.com, and onlinekhabar.com">
               <Database size={12} />
               <select
                 aria-label="Data Source Provider"
@@ -375,6 +375,7 @@ function NavigationShell({ children }: { children: React.ReactNode }) {
               >
                 <option value="nplt20league">nplt20league (HQ)</option>
                 <option value="cricnepal">cricnepal</option>
+                <option value="onlinekhabar">onlinekhabar (Live)</option>
               </select>
             </div>
 

@@ -169,6 +169,7 @@ export default function ScoreEntryPage() {
 
   // WebSocket sync connection
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsEnginePort, setWsEnginePort] = useState<string>("");
   const wsRef = useRef<WebSocket | null>(null);
 
   // Undo history tracking
@@ -215,7 +216,15 @@ export default function ScoreEntryPage() {
         ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
-        ws.onopen = () => setWsConnected(true);
+        ws.onopen = () => {
+          setWsConnected(true);
+          try {
+            const parsed = new URL(wsUrl);
+            setWsEnginePort(parsed.port ? `:${parsed.port}` : "LIVE");
+          } catch {
+            setWsEnginePort("LIVE");
+          }
+        };
         ws.onclose = () => {
           setWsConnected(false);
           timer = setTimeout(connect, 3000);
@@ -1140,7 +1149,7 @@ export default function ScoreEntryPage() {
               }}
             >
               <span className={`live-dot ${wsConnected ? "" : "recording"}`} style={{ width: 6, height: 6 }} />
-              <span>GFX ENGINE: {wsConnected ? "ONLINE (:3001)" : "OFFLINE"}</span>
+              <span>GFX ENGINE: {wsConnected ? `ONLINE (${wsEnginePort || "LIVE"})` : "OFFLINE"}</span>
             </span>
             {match && (
               <button
