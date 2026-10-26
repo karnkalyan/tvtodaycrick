@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  ArrowLeftRight,
   Award,
   Check,
   ChevronRight,
@@ -59,6 +60,14 @@ type StatForm = {
   dismissal: string;
 };
 
+const chaseTargetFor = (firstInnings: InnForm): string => {
+  const hasStarted = firstInnings.status !== "NOT_STARTED"
+    || Number(firstInnings.runs) > 0
+    || Number(firstInnings.balls) > 0
+    || Number(firstInnings.wickets) > 0;
+  return hasStarted ? String(Number(firstInnings.runs || 0) + 1) : "";
+};
+
 const blankStat: StatForm = {
   teamId: "",
   playerId: "",
@@ -80,7 +89,17 @@ const blankStat: StatForm = {
 
 const toInn = (match: Match, n: number): InnForm => {
   const i = match.innings?.find((x) => x.inningsNumber === n);
-  const teamId = i?.teamId || (n === 1 ? match.homeTeamId : match.awayTeamId);
+  const tossBattingTeamId = match.toss
+    ? match.toss.decision === "BAT"
+      ? match.toss.winnerTeamId
+      : match.toss.winnerTeamId === match.homeTeamId
+        ? match.awayTeamId
+        : match.homeTeamId
+    : match.homeTeamId;
+  const firstBattingTeamId = match.innings?.find((x) => x.inningsNumber === 1)?.teamId || tossBattingTeamId;
+  const teamId = i?.teamId || (n === 1
+    ? firstBattingTeamId
+    : firstBattingTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId);
   return {
     teamId: String(teamId),
     runs: String(i?.runs ?? 0),
@@ -233,6 +252,7 @@ export default function ScoreEntryPage() {
       setMatch(m);
       const i1 = toInn(m, 1);
       const i2 = toInn(m, 2);
+      if (!i2.target) i2.target = chaseTargetFor(i1);
       setInn1(i1);
       setInn2(i2);
 
@@ -410,31 +430,67 @@ export default function ScoreEntryPage() {
 
   // Save innings with optional undo journal metadata
   const saveInnings = async (n: number, f: InnForm | null, undoGroup?: string, undoLabel?: string) => {
-    if (!match || !f) return;
+    if (!match || !f || !inn1 || !inn2) return;
     setBusy(true);
+    setError("");
     try {
-      await api("/api/innings", {
-        method: "POST",
-        body: jsonBody({
-          matchId: match.id,
-          teamId: Number(f.teamId),
-          inningsNumber: n,
-          runs: Number(f.runs),
-          wickets: Number(f.wickets),
-          balls: Number(f.balls),
-          extras: Number(f.extras),
-          target: f.target ? Number(f.target) : null,
-          status: f.status,
-          undoGroup,
-          undoLabel,
-        }),
-      });
-      setToast(`Innings ${n} saved successfully`);
+      const group = undoGroup || `innings-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const label = undoLabel || "Innings details saved";
+      const nextInn2 = { ...inn2, target: chaseTargetFor(inn1) };
+      await Promise.all([
+        api("/api/innings", { method: "POST", body: jsonBody(inningsPayload(1, inn1, group, label)) }),
+        api("/api/innings", { method: "POST", body: jsonBody(inningsPayload(2, nextInn2, group, label)) }),
+      ]);
+      setToast(`All innings details saved from Innings ${n}`);
       const refreshed = await loadDetail(match.id);
       await syncMatchToBroadcast(refreshed);
       await fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Innings save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inningsPayload = (n: 1 | 2, f: InnForm, undoGroup?: string, undoLabel?: string) => ({
+    matchId: match?.id,
+    teamId: Number(f.teamId),
+    inningsNumber: n,
+    runs: Number(f.runs),
+    wickets: Number(f.wickets),
+    balls: Number(f.balls),
+    extras: Number(f.extras),
+    target: n === 2 && f.target ? Number(f.target) : null,
+    status: f.status,
+    undoGroup,
+    undoLabel,
+  });
+
+  // Swap only the batting-team assignments. The runs, wickets, balls, extras,
+  // target, and status remain attached to their innings number.
+  const handleSwapInningsTeams = async () => {
+    if (!match || !inn1 || !inn2 || busy) return;
+    const nextInn1 = { ...inn1, teamId: inn2.teamId };
+    const nextInn2 = { ...inn2, teamId: inn1.teamId };
+    const undoGroup = `swap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const undoLabel = "Swapped innings batting teams";
+
+    setBusy(true);
+    setError("");
+    setInn1(nextInn1);
+    setInn2(nextInn2);
+    try {
+      await Promise.all([
+        api("/api/innings", { method: "POST", body: jsonBody(inningsPayload(1, nextInn1, undoGroup, undoLabel)) }),
+        api("/api/innings", { method: "POST", body: jsonBody(inningsPayload(2, nextInn2, undoGroup, undoLabel)) }),
+      ]);
+      setToast(`Batting order swapped: ${nextInn1.teamId === String(match.homeTeamId) ? match.homeTeam.name : match.awayTeam.name} will bat first`);
+      const refreshed = await loadDetail(match.id);
+      await syncMatchToBroadcast(refreshed);
+      await fetchUndoHistory(match.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not swap innings teams");
+      await loadDetail(match.id);
     } finally {
       setBusy(false);
     }
@@ -551,8 +607,20 @@ export default function ScoreEntryPage() {
       status: "LIVE",
     };
 
-    if (activeInnings === 1) setInn1(nextInn);
-    else setInn2(nextInn);
+    // The chase target always follows the first-innings score. Keeping this in
+    // the same state as quick scoring makes the detailed form a live reflection
+    // of the controls above it instead of a second, stale score source.
+    const nextChaseTarget = activeInnings === 1
+      ? String(result.runs + 1)
+      : inn1 ? chaseTargetFor(inn1) : "";
+    nextInn.target = activeInnings === 2 ? (nextInn.target || nextChaseTarget) : "";
+
+    if (activeInnings === 1) {
+      setInn1(nextInn);
+      setInn2((value) => value ? { ...value, target: nextChaseTarget } : value);
+    } else {
+      setInn2(nextInn);
+    }
 
     // Every delivery advances the broadcast "This Over" strip. Boundary and
     // wicket actions also own their stinger, so each click emits exactly once.
@@ -571,20 +639,16 @@ export default function ScoreEntryPage() {
     try {
       await api("/api/innings", {
         method: "POST",
-        body: jsonBody({
-          matchId: match.id,
-          teamId: Number(nextInn.teamId),
-          inningsNumber: activeInnings,
-          runs: result.runs,
-          wickets: result.wickets,
-          balls: result.balls,
-          extras: result.extras,
-          target: nextInn.target ? Number(nextInn.target) : null,
-          status: nextInn.status,
-          undoGroup,
-          undoLabel,
-        }),
+        body: jsonBody(inningsPayload(activeInnings, nextInn, undoGroup, undoLabel)),
       });
+
+      if (activeInnings === 1 && inn2) {
+        const nextSecondInnings = { ...inn2, target: nextChaseTarget };
+        await api("/api/innings", {
+          method: "POST",
+          body: jsonBody(inningsPayload(2, nextSecondInnings, undoGroup, undoLabel)),
+        });
+      }
 
       // Update the striker without erasing fielding/bowling values already in
       // the same player-match row.
@@ -670,8 +734,26 @@ export default function ScoreEntryPage() {
   };
 
   const setI = (which: 1 | 2, key: keyof InnForm, value: string) => {
-    if (which === 1) setInn1((s) => (s ? { ...s, [key]: value } : s));
-    else setInn2((s) => (s ? { ...s, [key]: value } : s));
+    if (key === "teamId" && match) {
+      const otherTeamId = value === String(match.homeTeamId) ? String(match.awayTeamId) : String(match.homeTeamId);
+      if (which === 1) {
+        setInn1((s) => (s ? { ...s, teamId: value } : s));
+        setInn2((s) => (s ? { ...s, teamId: otherTeamId } : s));
+      } else {
+        setInn2((s) => (s ? { ...s, teamId: value } : s));
+        setInn1((s) => (s ? { ...s, teamId: otherTeamId } : s));
+      }
+      return;
+    }
+    if (which === 1 && inn1) {
+      const next = { ...inn1, [key]: value };
+      setInn1(next);
+      if (["runs", "wickets", "balls", "status"].includes(key)) {
+        setInn2((second) => second ? { ...second, target: chaseTargetFor(next) } : second);
+      }
+    } else if (which === 2) {
+      setInn2((s) => (s ? { ...s, [key]: value } : s));
+    }
   };
 
   const setS = <K extends keyof StatForm>(k: K, v: StatForm[K]) =>
@@ -682,8 +764,8 @@ export default function ScoreEntryPage() {
   }
 
   // Derive active innings scores for both teams for display in Hero
-  const homeInnings = match?.innings?.find((i) => i.teamId === match.homeTeamId);
-  const awayInnings = match?.innings?.find((i) => i.teamId === match.awayTeamId);
+  const homeInnings = [inn1, inn2].find((i) => i?.teamId === String(match?.homeTeamId));
+  const awayInnings = [inn1, inn2].find((i) => i?.teamId === String(match?.awayTeamId));
   const activeForm = activeInnings === 1 ? inn1 : inn2;
   const activeBattingTeam = match && activeForm?.teamId === String(match.awayTeamId) ? match.awayTeam : match?.homeTeam;
   const activeBowlingTeam = match && activeBattingTeam?.id === match.homeTeamId ? match.awayTeam : match?.homeTeam;
@@ -895,8 +977,8 @@ export default function ScoreEntryPage() {
                       <div className="score-overs-tag">
                         {homeInnings ? (
                           <>
-                            <Overs balls={homeInnings.balls} /> OVERS
-                            {homeInnings.balls > 0 && ` · CRR ${(homeInnings.runs / (homeInnings.balls / 6)).toFixed(2)}`}
+                            <Overs balls={Number(homeInnings.balls)} /> OVERS
+                            {Number(homeInnings.balls) > 0 && ` · CRR ${(Number(homeInnings.runs) / (Number(homeInnings.balls) / 6)).toFixed(2)}`}
                           </>
                         ) : (
                           "YET TO BAT"
@@ -924,8 +1006,8 @@ export default function ScoreEntryPage() {
                       <div className="score-overs-tag">
                         {awayInnings ? (
                           <>
-                            <Overs balls={awayInnings.balls} /> OVERS
-                            {awayInnings.balls > 0 && ` · CRR ${(awayInnings.runs / (awayInnings.balls / 6)).toFixed(2)}`}
+                            <Overs balls={Number(awayInnings.balls)} /> OVERS
+                            {Number(awayInnings.balls) > 0 && ` · CRR ${(Number(awayInnings.runs) / (Number(awayInnings.balls) / 6)).toFixed(2)}`}
                           </>
                         ) : (
                           "YET TO BAT"
@@ -1157,6 +1239,24 @@ export default function ScoreEntryPage() {
                   </article>
 
                   {/* INNINGS 1 & 2 FORMS */}
+                  <div
+                    className="panel-header"
+                    style={{ alignItems: "center", margin: "18px 0 10px", gap: 12 }}
+                  >
+                    <div>
+                      <h3>Innings batting order</h3>
+                      <p>Scores below update automatically from Quick Ball-by-Ball Scoring.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="button compact secondary"
+                      onClick={handleSwapInningsTeams}
+                      disabled={busy}
+                      title="Exchange the batting teams while keeping each innings score in place"
+                    >
+                      <ArrowLeftRight size={14} /> Swap innings teams
+                    </button>
+                  </div>
                   {([1, 2] as const).map((n) => {
                     const f = n === 1 ? inn1 : inn2;
                     return (
@@ -1228,9 +1328,11 @@ export default function ScoreEntryPage() {
                             <input
                               type="number"
                               min="1"
-                              value={f.target}
-                              placeholder="e.g. 175"
-                              onChange={(e) => setI(n, "target", e.target.value)}
+                              value={n === 2 ? f.target : ""}
+                              placeholder={n === 2 ? "Auto from Innings 1" : "Not applicable"}
+                              readOnly
+                              disabled={n === 1}
+                              title={n === 2 ? "Automatically set to the first-innings total plus one" : "Only the chasing innings has a target"}
                             />
                           </div>
                           <div className="field">
@@ -1253,7 +1355,7 @@ export default function ScoreEntryPage() {
                             onClick={() => saveInnings(n, f)}
                             disabled={busy}
                           >
-                            Save Innings {n}
+                            Save All Innings Details
                           </button>
                         </div>
                       </article>
