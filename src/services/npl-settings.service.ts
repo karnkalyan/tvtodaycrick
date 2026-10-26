@@ -19,16 +19,16 @@ export interface NplSettingsResponse {
 export const DEFAULT_NPLT20_URL = "https://nplt20league.com";
 
 export function detectProvider(url?: string | null): NplProvider {
-  if (!url) return "nplt20league";
-  if (url.includes("cricnepal.com")) return "cricnepal";
-  return "nplt20league";
+  if (!url) return "cricnepal";
+  if (url.includes("nplt20league.com")) return "nplt20league";
+  return "cricnepal";
 }
 
 export async function getSourceSettings(year: string): Promise<NplSettingsResponse> {
   const config = nplSeason(year);
   const saved = await prisma.nplSourceSettings.findUnique({ where: { season: year } });
 
-  const rawUrl = saved?.sourceUrl || DEFAULT_NPLT20_URL;
+  const rawUrl = saved?.sourceUrl || config.sourceUrl;
   const provider = detectProvider(rawUrl);
 
   return {

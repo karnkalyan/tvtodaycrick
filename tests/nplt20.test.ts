@@ -27,7 +27,7 @@ test("detectProvider correctly distinguishes nplt20league from cricnepal", () =>
   assert.equal(detectProvider("https://nplt20league.com"), "nplt20league");
   assert.equal(detectProvider("https://nplt20league.com/teams/"), "nplt20league");
   assert.equal(detectProvider("https://www.cricnepal.com/tournament/nepal-premier-league-2026-207"), "cricnepal");
-  assert.equal(detectProvider(null), "nplt20league");
+  assert.equal(detectProvider(null), "cricnepal");
 });
 
 test("local asset engine checks cached files in public directory", () => {

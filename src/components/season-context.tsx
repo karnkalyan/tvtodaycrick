@@ -36,7 +36,7 @@ export function SeasonProvider({ children }: { children: React.ReactNode }) {
   const [autoSync, setAutoSync] = useState(false);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
-  const [provider, setProvider] = useState<NplProvider>("nplt20league");
+  const [provider, setProvider] = useState<NplProvider>("cricnepal");
 
   const autoSyncTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -53,6 +53,8 @@ export function SeasonProvider({ children }: { children: React.ReactNode }) {
     const savedProvider = localStorage.getItem("npl-provider") as NplProvider | null;
     if (savedProvider === "nplt20league" || savedProvider === "cricnepal") {
       setProvider(savedProvider);
+    } else {
+      setProvider("cricnepal");
     }
 
     setReady(true);

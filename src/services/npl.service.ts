@@ -27,6 +27,7 @@ import {
   mapBowling,
 } from "../lib/nplt20-api";
 import { downloadTeamLogo, downloadPlayerImage } from "../lib/npl-asset-manager";
+import { fetchCricNepalLiveMatch, applyCricNepalMatchToDb } from "../lib/cricnepal-live";
 import type { NplSeason, NplTeam, NplPlayer, NplFixture } from "../types/npl";
 import type { BattingStyle, BowlingStyle, PlayerRole, Prisma } from "@prisma/client";
 
@@ -595,7 +596,15 @@ async function persist(data: NplSeason, full: boolean) {
             tournamentId: tournament.id,
             OR: [{ matchNumber }, { matchNumber: `SOURCE-${f.sourceId}` }, ...(year === "2026" ? [{ matchNumber: `Match ${ordinal}` }] : [])],
           },
+          include: { innings: true },
         });
+
+        if (exists && (exists.status === "LIVE" || exists.status === "COMPLETED" || exists.innings.length > 0)) {
+          // Preserve ongoing or finished match state! Do not revert to SCHEDULED.
+          matchData.status = exists.status;
+          matchData.winnerTeamId = exists.winnerTeamId ?? matchData.winnerTeamId;
+          matchData.resultText = exists.resultText ?? matchData.resultText;
+        }
 
         const savedMatch = exists ? await tx.match.update({ where: { id: exists.id }, data: matchData }) : await tx.match.create({ data: { ...matchData, tournamentId: tournament.id, matchNumber } });
 
@@ -712,38 +721,82 @@ export async function getNpl(year = "2026"): Promise<NplSeason> {
 
 /**
  * Lightweight real-time live score update (called by Auto-Sync)
+ * CricNepal is primary live provider.
  */
 export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean; updated: number; timestamp: string }> {
   try {
-    const snapshot = await fetchNplT20LiveSnapshot();
-    const liveMatches = snapshot?.matches || [];
     let updatedCount = 0;
+    let hasLive = false;
 
-    if (Array.isArray(liveMatches) && liveMatches.length > 0) {
-      for (const lm of liveMatches) {
-        const match = await prisma.match.findFirst({
-          where: {
-            OR: [
-              { title: { contains: lm.team1?.name } },
-              { title: { contains: lm.team2?.name } },
-            ],
-          },
-        });
-        if (match) {
-          await prisma.match.update({
-            where: { id: match.id },
-            data: {
-              status: "LIVE",
-              notes: `Live Score Update: ${lm.team1?.name} ${lm.team1?.score || ""} vs ${lm.team2?.name} ${lm.team2?.score || ""}`,
-            },
-          });
-          updatedCount++;
+    // 1. PRIMARY: CricNepal Live Sync
+    const candidateMatches = await prisma.match.findMany({
+      where: {
+        tournament: { season: year },
+        status: { in: ["LIVE", "SCHEDULED"] },
+      },
+      orderBy: { startTime: "asc" },
+      take: 6,
+    });
+
+    for (const m of candidateMatches) {
+      let sourceUrl = "";
+      if (m.notes) {
+        const matchUrlLine = m.notes.match(/Source:\s*(https:\/\/[^\s]+cricnepal\.com\/match\/[^\s]+)/i);
+        if (matchUrlLine) sourceUrl = matchUrlLine[1].trim();
+      }
+      if (!sourceUrl && year === "2026" && (m.matchNumber === "Season3-M1" || m.matchNumber === "Match 1" || m.title.includes("Lumbini"))) {
+        sourceUrl = "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
+      }
+
+      if (sourceUrl) {
+        try {
+          const parsed = await fetchCricNepalLiveMatch(sourceUrl);
+          if (parsed) {
+            await applyCricNepalMatchToDb(m.id, parsed);
+            updatedCount++;
+            if (parsed.status === "LIVE") hasLive = true;
+          }
+        } catch (err) {
+          console.warn(`[NplService] CricNepal sync skipped for match ${m.id}:`, err instanceof Error ? err.message : err);
         }
       }
     }
 
+    // 2. SECONDARY / FALLBACK: nplt20 snapshot if no CricNepal match was live
+    if (!hasLive) {
+      try {
+        const snapshot = await fetchNplT20LiveSnapshot();
+        const liveMatches = snapshot?.matches || [];
+        if (Array.isArray(liveMatches) && liveMatches.length > 0) {
+          for (const lm of liveMatches) {
+            const match = await prisma.match.findFirst({
+              where: {
+                OR: [
+                  { title: { contains: lm.team1?.name } },
+                  { title: { contains: lm.team2?.name } },
+                ],
+              },
+            });
+            if (match) {
+              await prisma.match.update({
+                where: { id: match.id },
+                data: {
+                  status: "LIVE",
+                  notes: `Live Score Update: ${lm.team1?.name} ${lm.team1?.score || ""} vs ${lm.team2?.name} ${lm.team2?.score || ""}`,
+                },
+              });
+              updatedCount++;
+              hasLive = true;
+            }
+          }
+        }
+      } catch {
+        // Fallback optional
+      }
+    }
+
     return {
-      live: liveMatches.length > 0,
+      live: hasLive,
       updated: updatedCount,
       timestamp: new Date().toISOString(),
     };

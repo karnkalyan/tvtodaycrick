@@ -5,8 +5,12 @@ import {
   ArrowLeftRight,
   Award,
   Check,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Flame,
+  Minus,
+  Plus,
   Radio,
   RefreshCw,
   Search,
@@ -28,7 +32,13 @@ import {
   humanRole,
 } from "@/components/common";
 import { api, jsonBody } from "@/lib/client-api";
-import { applyQuickBall, QUICK_BALL_EVENTS, type QuickBallType } from "@/lib/score-events";
+import {
+  applyCustomExtra,
+  applyQuickBall,
+  QUICK_BALL_EVENTS,
+  type QuickBallType,
+  type ExtraCategory,
+} from "@/lib/score-events";
 import type { Match, Player, PlayerStat } from "@/types/models";
 
 type InnForm = {
@@ -141,6 +151,20 @@ export default function ScoreEntryPage() {
   const [strikerId, setStrikerId] = useState<string>("");
   const [nonStrikerId, setNonStrikerId] = useState<string>("");
   const [bowlerId, setBowlerId] = useState<string>("");
+
+  // Custom Extras & Leg Bye workspace state
+  const [showCustomExtra, setShowCustomExtra] = useState(false);
+  const [extraCategory, setExtraCategory] = useState<ExtraCategory>("LB");
+  const [extraRuns, setExtraRuns] = useState<number>(1);
+  const [extraIsLegal, setExtraIsLegal] = useState<boolean>(true);
+  const [showDirectAdjust, setShowDirectAdjust] = useState(false);
+  const [directAdjustRuns, setDirectAdjustRuns] = useState<string>("1");
+
+  // CricNepal Auto-Sync state & continuity
+  const [cricNepalAutoSync, setCricNepalAutoSync] = useState(false);
+  const [isCricNepalSyncing, setIsCricNepalSyncing] = useState(false);
+  const [cricNepalLastSync, setCricNepalLastSync] = useState<string | null>(null);
+  const [cricNepalSyncMsg, setCricNepalSyncMsg] = useState<string | null>(null);
 
   // WebSocket sync connection
   const [wsConnected, setWsConnected] = useState(false);
@@ -295,6 +319,58 @@ export default function ScoreEntryPage() {
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
   }, [selectedId, loadDetail]);
+
+  // CricNepal Match-Level Live Sync
+  const handleCricNepalSync = useCallback(
+    async (force = false) => {
+      if (!selectedId) return;
+      setIsCricNepalSyncing(true);
+      setCricNepalSyncMsg(null);
+      try {
+        const res = await api<{
+          success: boolean;
+          sourceUrl: string;
+          match: Match;
+          parsed: any;
+        }>(`/api/matches/${selectedId}/sync-source`, {
+          method: "POST",
+          body: jsonBody({ forceOverwrite: force }),
+        });
+
+        if (res.match) {
+          await loadDetail(selectedId);
+          const timeStr = new Date().toLocaleTimeString();
+          setCricNepalLastSync(timeStr);
+          setCricNepalSyncMsg(`Synced with CricNepal at ${timeStr}`);
+        }
+      } catch (err) {
+        console.warn("CricNepal match sync failed:", err);
+        setCricNepalSyncMsg(err instanceof Error ? err.message : "Sync failed");
+      } finally {
+        setIsCricNepalSyncing(false);
+      }
+    },
+    [selectedId, loadDetail]
+  );
+
+  const toggleCricNepalAutoSync = useCallback(() => {
+    setCricNepalAutoSync((prev) => {
+      const next = !prev;
+      if (next && selectedId) {
+        void handleCricNepalSync(false);
+      }
+      return next;
+    });
+  }, [selectedId, handleCricNepalSync]);
+
+  // Auto-Sync polling loop every 20 seconds while enabled
+  useEffect(() => {
+    if (!cricNepalAutoSync || !selectedId) return;
+    const timer = setInterval(() => {
+      void handleCricNepalSync(false);
+    }, 20000);
+    return () => clearInterval(timer);
+  }, [cricNepalAutoSync, selectedId, handleCricNepalSync]);
 
   // Players for the currently selected team in player stat tab
   const teamPlayers = useMemo<Player[]>(() => {
@@ -654,7 +730,7 @@ export default function ScoreEntryPage() {
 
     // Create undo group so innings + striker stat roll back together in a single undo step
     const undoGroup = `ball-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const ballLabel = type === "wicket" ? "WICKET" : type === "wide" ? "WIDE (+1)" : type === "noball" ? "NO BALL (+1)" : `+${type} RUN${type === "1" ? "" : "S"}`;
+    const ballLabel = event.label;
     const undoLabel = `Ball: ${ballLabel} (${result.runs}/${result.wickets} in ${ovStr} ov)`;
 
     try {
@@ -673,10 +749,14 @@ export default function ScoreEntryPage() {
 
       // Update the striker without erasing fielding/bowling values already in
       // the same player-match row.
+      // NOTE: Extra runs (Leg Byes, Byes, Wides, etc.) are NOT counted towards the batsman's score!
       if (strikerId && event.legalBalls > 0) {
         const existing = match.stats?.find(
           (entry) => String(entry.playerId) === strikerId && Number(entry.innings) === activeInnings,
         );
+        const strikerRunsToAdd = event.isExtra ? 0 : event.runs;
+        const foursToAdd = event.isExtra ? 0 : (event.isFour ? 1 : 0);
+        const sixesToAdd = event.isExtra ? 0 : (event.isSix ? 1 : 0);
         await api("/api/stats", {
           method: "POST",
           body: jsonBody({
@@ -684,10 +764,10 @@ export default function ScoreEntryPage() {
             playerId: Number(strikerId),
             teamId: Number(current.teamId),
             innings: activeInnings,
-            runs: (existing?.runs || 0) + event.runs,
+            runs: (existing?.runs || 0) + strikerRunsToAdd,
             ballsFaced: (existing?.ballsFaced || 0) + event.legalBalls,
-            fours: (existing?.fours || 0) + (event.isFour ? 1 : 0),
-            sixes: (existing?.sixes || 0) + (event.isSix ? 1 : 0),
+            fours: (existing?.fours || 0) + foursToAdd,
+            sixes: (existing?.sixes || 0) + sixesToAdd,
             wickets: existing?.wickets || 0,
             ballsBowled: existing?.ballsBowled || 0,
             runsConceded: existing?.runsConceded || 0,
@@ -708,6 +788,8 @@ export default function ScoreEntryPage() {
           (entry) => String(entry.playerId) === bowlerId && Number(entry.innings) === activeInnings,
         );
         const bowlingTeamId = Number(current.teamId) === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+        // In cricket rules, Leg Byes and Byes are not charged to the bowler's runs conceded
+        const bowlerRunsConceded = (event.isLegBye || event.isBye) ? 0 : event.runs;
         await api("/api/stats", {
           method: "POST",
           body: jsonBody({
@@ -721,7 +803,7 @@ export default function ScoreEntryPage() {
             sixes: existing?.sixes || 0,
             wickets: (existing?.wickets || 0) + event.wickets,
             ballsBowled: (existing?.ballsBowled || 0) + event.legalBalls,
-            runsConceded: (existing?.runsConceded || 0) + event.runs,
+            runsConceded: (existing?.runsConceded || 0) + bowlerRunsConceded,
             maidens: existing?.maidens || 0,
             catches: existing?.catches || 0,
             stumpings: existing?.stumpings || 0,
@@ -742,12 +824,244 @@ export default function ScoreEntryPage() {
         setNonStrikerId(previousStriker);
       }
 
-      setToast(`Ball recorded: ${event.label}`);
+      setToast(`Ball recorded: ${event.label}${event.isExtra ? " (Extra - not counted on batter)" : ""}`);
       const refreshed = await loadDetail(match.id);
       await syncMatchToBroadcast(refreshed);
       await fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not record delivery");
+      await loadDetail(match.id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSelectExtraCategory = (cat: ExtraCategory) => {
+    setExtraCategory(cat);
+    if (cat === "LB" || cat === "B") {
+      setExtraIsLegal(true);
+    } else {
+      setExtraIsLegal(false);
+    }
+  };
+
+  // Record custom extra (LB, Bye, Wide, No Ball, Penalty) with user-defined runs
+  const handleCustomExtraBall = async () => {
+    if (!match || busy) return;
+    const current = activeInnings === 1 ? inn1 : inn2;
+    if (!current) return;
+    const runs = Math.max(0, Number(extraRuns) || 0);
+
+    setBusy(true);
+    setError("");
+
+    const isLegal = extraIsLegal;
+    const result = applyCustomExtra(
+      {
+        runs: Number(current.runs) || 0,
+        wickets: Number(current.wickets) || 0,
+        balls: Number(current.balls) || 0,
+        extras: Number(current.extras) || 0,
+      },
+      {
+        category: extraCategory,
+        runs,
+        isLegal,
+      }
+    );
+
+    const nextInn: InnForm = {
+      ...current,
+      runs: String(result.runs),
+      wickets: String(result.wickets),
+      balls: String(result.balls),
+      extras: String(result.extras),
+      status: "LIVE",
+    };
+
+    const nextChaseTarget = activeInnings === 1
+      ? String(result.runs + 1)
+      : inn1 ? chaseTargetFor(inn1) : "";
+    nextInn.target = activeInnings === 2 ? (nextInn.target || nextChaseTarget) : "";
+
+    if (activeInnings === 1) {
+      setInn1(nextInn);
+      setInn2((value) => value ? { ...value, target: nextChaseTarget } : value);
+    } else {
+      setInn2(nextInn);
+    }
+
+    dispatchBroadcastCue({ action: "action", name: result.broadcastAction });
+    const ovStr = `${Math.floor(result.balls / 6)}.${result.balls % 6}`;
+    dispatchBroadcastCue({
+      action: "scoreUpdate",
+      data: { runs: result.runs, wickets: result.wickets, overs: ovStr },
+    });
+
+    const undoGroup = `extra-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const catLabel = extraCategory === "LB" ? "Leg Bye" : extraCategory === "B" ? "Bye" : extraCategory === "WD" ? "Wide" : extraCategory === "NB" ? "No Ball" : "Penalty";
+    const undoLabel = `Extra: +${runs} ${catLabel} (${result.runs}/${result.wickets} in ${ovStr} ov)`;
+
+    try {
+      await api("/api/innings", {
+        method: "POST",
+        body: jsonBody(inningsPayload(activeInnings, nextInn, undoGroup, undoLabel)),
+      });
+
+      if (activeInnings === 1 && inn2) {
+        const nextSecondInnings = { ...inn2, target: nextChaseTarget };
+        await api("/api/innings", {
+          method: "POST",
+          body: jsonBody(inningsPayload(2, nextSecondInnings, undoGroup, undoLabel)),
+        });
+      }
+
+      // Striker: If legal delivery, striker faced a delivery (+1 ball), but runs are NOT counted to batter!
+      if (strikerId && isLegal) {
+        const existing = match.stats?.find(
+          (entry) => String(entry.playerId) === strikerId && Number(entry.innings) === activeInnings,
+        );
+        await api("/api/stats", {
+          method: "POST",
+          body: jsonBody({
+            matchId: match.id,
+            playerId: Number(strikerId),
+            teamId: Number(current.teamId),
+            innings: activeInnings,
+            runs: existing?.runs || 0, // NOT COUNTED ON BATSMAN
+            ballsFaced: (existing?.ballsFaced || 0) + 1,
+            fours: existing?.fours || 0,
+            sixes: existing?.sixes || 0,
+            wickets: existing?.wickets || 0,
+            ballsBowled: existing?.ballsBowled || 0,
+            runsConceded: existing?.runsConceded || 0,
+            maidens: existing?.maidens || 0,
+            catches: existing?.catches || 0,
+            stumpings: existing?.stumpings || 0,
+            runOuts: existing?.runOuts || 0,
+            isOut: existing?.isOut || false,
+            dismissal: existing?.dismissal || null,
+            undoGroup,
+            undoLabel,
+          }),
+        });
+      }
+
+      // Bowler: For Leg Bye, Bye, or Penalty, runs are NOT conceded by bowler.
+      if (bowlerId) {
+        const existing = match.stats?.find(
+          (entry) => String(entry.playerId) === bowlerId && Number(entry.innings) === activeInnings,
+        );
+        const bowlingTeamId = Number(current.teamId) === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+        const runsConceded = (extraCategory === "LB" || extraCategory === "B" || extraCategory === "PEN") ? 0 : runs;
+        await api("/api/stats", {
+          method: "POST",
+          body: jsonBody({
+            matchId: match.id,
+            playerId: Number(bowlerId),
+            teamId: bowlingTeamId,
+            innings: activeInnings,
+            runs: existing?.runs || 0,
+            ballsFaced: existing?.ballsFaced || 0,
+            fours: existing?.fours || 0,
+            sixes: existing?.sixes || 0,
+            wickets: existing?.wickets || 0,
+            ballsBowled: (existing?.ballsBowled || 0) + (isLegal ? 1 : 0),
+            runsConceded: (existing?.runsConceded || 0) + runsConceded,
+            maidens: existing?.maidens || 0,
+            catches: existing?.catches || 0,
+            stumpings: existing?.stumpings || 0,
+            runOuts: existing?.runOuts || 0,
+            isOut: existing?.isOut || false,
+            dismissal: existing?.dismissal || null,
+            undoGroup,
+            undoLabel,
+          }),
+        });
+      }
+
+      const overEnded = isLegal && result.balls % 6 === 0;
+      const oddRuns = runs % 2 === 1;
+      if (oddRuns !== overEnded) {
+        const previousStriker = strikerId;
+        setStrikerId(nonStrikerId);
+        setNonStrikerId(previousStriker);
+      }
+
+      setToast(`Extra recorded: +${runs} ${catLabel} (not counted on player)`);
+      setShowCustomExtra(false);
+      const refreshed = await loadDetail(match.id);
+      await syncMatchToBroadcast(refreshed);
+      await fetchUndoHistory(match.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not record extra delivery");
+      await loadDetail(match.id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Direct manual extras adjustment without bowling a ball
+  const handleDirectExtrasAdjust = async (runsDelta: number) => {
+    if (!match || busy || runsDelta === 0) return;
+    const current = activeInnings === 1 ? inn1 : inn2;
+    if (!current) return;
+
+    setBusy(true);
+    setError("");
+
+    const nextRuns = Math.max(0, Number(current.runs) + runsDelta);
+    const nextExtras = Math.max(0, Number(current.extras) + runsDelta);
+
+    const nextInn: InnForm = {
+      ...current,
+      runs: String(nextRuns),
+      extras: String(nextExtras),
+      status: "LIVE",
+    };
+
+    const nextChaseTarget = activeInnings === 1
+      ? String(nextRuns + 1)
+      : inn1 ? chaseTargetFor(inn1) : "";
+    nextInn.target = activeInnings === 2 ? (nextInn.target || nextChaseTarget) : "";
+
+    if (activeInnings === 1) {
+      setInn1(nextInn);
+      setInn2((value) => value ? { ...value, target: nextChaseTarget } : value);
+    } else {
+      setInn2(nextInn);
+    }
+
+    const ovStr = `${Math.floor(Number(current.balls) / 6)}.${Number(current.balls) % 6}`;
+    dispatchBroadcastCue({
+      action: "scoreUpdate",
+      data: { runs: nextRuns, wickets: Number(current.wickets), overs: ovStr },
+    });
+
+    const undoGroup = `adj-extra-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const undoLabel = `Manual Extras: ${runsDelta > 0 ? `+${runsDelta}` : runsDelta} runs (Total extras: ${nextExtras})`;
+
+    try {
+      await api("/api/innings", {
+        method: "POST",
+        body: jsonBody(inningsPayload(activeInnings, nextInn, undoGroup, undoLabel)),
+      });
+
+      if (activeInnings === 1 && inn2) {
+        const nextSecondInnings = { ...inn2, target: nextChaseTarget };
+        await api("/api/innings", {
+          method: "POST",
+          body: jsonBody(inningsPayload(2, nextSecondInnings, undoGroup, undoLabel)),
+        });
+      }
+
+      setToast(`Manual extras updated: ${runsDelta > 0 ? `+${runsDelta}` : runsDelta} (No player affected)`);
+      setShowDirectAdjust(false);
+      const refreshed = await loadDetail(match.id);
+      await syncMatchToBroadcast(refreshed);
+      await fetchUndoHistory(match.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update extras");
       await loadDetail(match.id);
     } finally {
       setBusy(false);
@@ -973,8 +1287,47 @@ export default function ScoreEntryPage() {
                       {match.homeTeam.name} vs {match.awayTeam.name}
                     </h2>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     <StatusPill status={match.status} />
+
+                    {/* CricNepal Auto-Sync & Manual Toggle */}
+                    <button
+                      type="button"
+                      className={`button compact ${cricNepalAutoSync ? "brand" : "secondary"}`}
+                      onClick={toggleCricNepalAutoSync}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        background: cricNepalAutoSync ? "rgba(34, 197, 94, 0.15)" : undefined,
+                        borderColor: cricNepalAutoSync ? "rgba(34, 197, 94, 0.4)" : undefined,
+                        color: cricNepalAutoSync ? "#15803d" : undefined,
+                        fontWeight: 700,
+                      }}
+                      title={`CricNepal Live Auto-Sync is ${cricNepalAutoSync ? "ACTIVE (Polling every 20s; manual input preserved)" : "OFF (Manual scoring mode)"}. Click to toggle.`}
+                    >
+                      {cricNepalAutoSync ? (
+                        <span className="pulse-dot" style={{ background: "#22c55e", width: 7, height: 7, borderRadius: "50%" }} />
+                      ) : (
+                        <Radio size={13} style={{ opacity: 0.6 }} />
+                      )}
+                      <span>{cricNepalAutoSync ? "Auto-Sync ON" : "Auto-Sync OFF"}</span>
+                      {isCricNepalSyncing && <RefreshCw size={11} className="spin" />}
+                    </button>
+
+                    {/* Manual Sync from CricNepal Button */}
+                    <button
+                      type="button"
+                      className="button compact secondary"
+                      onClick={() => void handleCricNepalSync(false)}
+                      disabled={isCricNepalSyncing}
+                      title="Fetch and merge latest CricNepal match score, toss, innings, and extras without wiping manual work"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
+                    >
+                      <RefreshCw size={12} className={isCricNepalSyncing ? "spin" : ""} />
+                      <span>{isCricNepalSyncing ? "Syncing..." : "Sync CricNepal"}</span>
+                    </button>
+
                     <button
                       type="button"
                       className="button compact"
@@ -1057,6 +1410,42 @@ export default function ScoreEntryPage() {
                     )}
                   </span>
                 </div>
+
+                {/* CRICNEPAL AUTO-SYNC STATUS & CONTINUITY BAR */}
+                {(cricNepalLastSync || cricNepalSyncMsg || cricNepalAutoSync) && (
+                  <div
+                    style={{
+                      marginTop: "10px",
+                      padding: "6px 14px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      background: "rgba(37, 99, 235, 0.08)",
+                      border: "1px solid rgba(37, 99, 235, 0.2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "10px",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: cricNepalAutoSync ? "#22c55e" : "#3b82f6",
+                          display: "inline-block",
+                        }}
+                      />
+                      <strong>CricNepal Auto-Sync:</strong>{" "}
+                      {cricNepalSyncMsg || (cricNepalAutoSync ? "Active polling every 20s" : `Last synced at ${cricNepalLastSync}`)}
+                    </span>
+                    <span style={{ fontSize: "11px", color: "var(--muted)" }}>
+                      Manual edits preserved on sync · Auto & Manual continuous
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* QUICK BALL-BY-BALL SCORING PANEL */}
@@ -1179,10 +1568,37 @@ export default function ScoreEntryPage() {
                       onClick={() => handleQuickBall(event.type)}
                       disabled={busy}
                       data-ball-type={event.type}
+                      title={event.isExtra ? `${event.label} (Extras - not counted on batter)` : event.label}
                     >
                       {event.label}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className={`ball-stepper-btn extra-toggle ${showCustomExtra ? "active" : ""}`}
+                    onClick={() => {
+                      setShowCustomExtra(!showCustomExtra);
+                      setShowDirectAdjust(false);
+                    }}
+                    disabled={busy}
+                    title="Open custom extra runs and leg-byes manager"
+                  >
+                    <Sliders size={13} style={{ marginRight: 6 }} />
+                    <span>{showCustomExtra ? "Close Extra" : "Custom Extra (LB)..."}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`ball-stepper-btn extra-toggle ${showDirectAdjust ? "active" : ""}`}
+                    onClick={() => {
+                      setShowDirectAdjust(!showDirectAdjust);
+                      setShowCustomExtra(false);
+                    }}
+                    disabled={busy}
+                    title="Manually adjust extras on innings without a delivery"
+                  >
+                    <Plus size={13} style={{ marginRight: 4 }} />
+                    <span>{showDirectAdjust ? "Close Adjust" : "Manual Extras +/-"}</span>
+                  </button>
                   <button
                     type="button"
                     className="ball-stepper-btn undo"
@@ -1205,6 +1621,248 @@ export default function ScoreEntryPage() {
                     {undoTotal > 0 && <span style={{ opacity: 0.85, fontSize: "11px" }}>({undoTotal})</span>}
                   </button>
                 </div>
+
+                {/* CUSTOM EXTRA & LEG BYE MANAGER */}
+                {showCustomExtra && (
+                  <div className="custom-extra-panel">
+                    <div className="custom-extra-header">
+                      <h5>
+                        <Zap size={15} color="#f59e0b" />
+                        <span>Custom Extra & Leg Bye Delivery</span>
+                        <span className="badge brand" style={{ fontSize: "10px", marginLeft: 6 }}>
+                          Not Credited to Batter
+                        </span>
+                      </h5>
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={() => setShowCustomExtra(false)}
+                        style={{ padding: "3px 8px", fontSize: "11px" }}
+                      >
+                        <X size={12} /> Close
+                      </button>
+                    </div>
+
+                    <div style={{ marginBottom: 12 }}>
+                      <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                        Extra Category:
+                      </label>
+                      <div className="custom-extra-cats">
+                        <button
+                          type="button"
+                          className={`custom-extra-cat-btn ${extraCategory === "LB" ? "active" : ""}`}
+                          onClick={() => handleSelectExtraCategory("LB")}
+                        >
+                          Leg Bye (LB)
+                        </button>
+                        <button
+                          type="button"
+                          className={`custom-extra-cat-btn ${extraCategory === "B" ? "active" : ""}`}
+                          onClick={() => handleSelectExtraCategory("B")}
+                        >
+                          Bye (B)
+                        </button>
+                        <button
+                          type="button"
+                          className={`custom-extra-cat-btn ${extraCategory === "WD" ? "active" : ""}`}
+                          onClick={() => handleSelectExtraCategory("WD")}
+                        >
+                          Wide (WD)
+                        </button>
+                        <button
+                          type="button"
+                          className={`custom-extra-cat-btn ${extraCategory === "NB" ? "active" : ""}`}
+                          onClick={() => handleSelectExtraCategory("NB")}
+                        >
+                          No Ball (NB)
+                        </button>
+                        <button
+                          type="button"
+                          className={`custom-extra-cat-btn ${extraCategory === "PEN" ? "active" : ""}`}
+                          onClick={() => handleSelectExtraCategory("PEN")}
+                        >
+                          Penalty / Custom (PEN)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ fontSize: "12px", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                        Runs to Credit as Extras:
+                      </label>
+                      <div className="custom-extra-runs-row">
+                        {[1, 2, 3, 4, 5, 6].map((num) => (
+                          <button
+                            key={num}
+                            type="button"
+                            className={`custom-extra-run-chip ${extraRuns === num ? "active" : ""}`}
+                            onClick={() => setExtraRuns(num)}
+                          >
+                            {num}
+                          </button>
+                        ))}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+                          <span style={{ fontSize: "12px", color: "var(--muted)" }}>Custom:</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="50"
+                            value={extraRuns}
+                            onChange={(e) => setExtraRuns(Math.max(0, parseInt(e.target.value) || 0))}
+                            style={{
+                              width: 65,
+                              padding: "6px 8px",
+                              borderRadius: "var(--radius)",
+                              border: "1px solid var(--line-strong)",
+                              background: "var(--surface)",
+                              color: "var(--text)",
+                              fontWeight: 800,
+                              fontSize: "14px",
+                              textAlign: "center",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "12px", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={extraIsLegal}
+                          onChange={(e) => setExtraIsLegal(e.target.checked)}
+                        />
+                        <span>Count as legal ball (+1 to overs count)</span>
+                        <small style={{ color: "var(--muted)" }}>
+                          ({extraCategory === "LB" || extraCategory === "B" ? "Standard for Byes/Leg Byes" : "Uncheck for Wide/No Ball"})
+                        </small>
+                      </label>
+
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          type="button"
+                          className="button compact secondary"
+                          onClick={() => setShowCustomExtra(false)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className="button compact"
+                          style={{
+                            background: "linear-gradient(135deg, #f59e0b, #d97706)",
+                            color: "#fff",
+                            fontWeight: 850,
+                          }}
+                          onClick={handleCustomExtraBall}
+                          disabled={busy}
+                        >
+                          Record +{extraRuns} {extraCategory} Delivery
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* MANUAL EXTRAS ADJUSTER (DIRECT INNINGS UPDATE WITHOUT A BALL) */}
+                {showDirectAdjust && (
+                  <div className="custom-extra-panel" style={{ borderColor: "rgba(14, 165, 233, 0.4)" }}>
+                    <div className="custom-extra-header">
+                      <h5>
+                        <Sliders size={15} color="#38bdf8" />
+                        <span>Manual Extras Adjustment (No Delivery Bowled)</span>
+                        <span className="badge" style={{ fontSize: "10px", marginLeft: 6 }}>
+                          Direct Score Correction
+                        </span>
+                      </h5>
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={() => setShowDirectAdjust(false)}
+                        style={{ padding: "3px 8px", fontSize: "11px" }}
+                      >
+                        <X size={12} /> Close
+                      </button>
+                    </div>
+
+                    <p style={{ fontSize: "12px", color: "var(--muted)", margin: "0 0 12px" }}>
+                      Directly add or subtract missing extras to the innings total without recording a ball bowled or changing any player stats:
+                    </p>
+
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={() => handleDirectExtrasAdjust(1)}
+                        disabled={busy}
+                      >
+                        +1 Extra
+                      </button>
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={() => handleDirectExtrasAdjust(2)}
+                        disabled={busy}
+                      >
+                        +2 Extras
+                      </button>
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={() => handleDirectExtrasAdjust(4)}
+                        disabled={busy}
+                      >
+                        +4 Extras (Boundary)
+                      </button>
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={() => handleDirectExtrasAdjust(5)}
+                        disabled={busy}
+                      >
+                        +5 Penalty Runs
+                      </button>
+                      <button
+                        type="button"
+                        className="button compact secondary"
+                        onClick={() => handleDirectExtrasAdjust(-1)}
+                        disabled={busy}
+                        style={{ color: "#ef4444" }}
+                      >
+                        -1 Extra
+                      </button>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+                      <span style={{ fontSize: "12px", fontWeight: 700 }}>Custom Runs:</span>
+                      <input
+                        type="number"
+                        value={directAdjustRuns}
+                        onChange={(e) => setDirectAdjustRuns(e.target.value)}
+                        placeholder="e.g. 3"
+                        style={{
+                          width: 80,
+                          padding: "6px 8px",
+                          borderRadius: "var(--radius)",
+                          border: "1px solid var(--line-strong)",
+                          background: "var(--surface)",
+                          color: "var(--text)",
+                          fontWeight: 800,
+                          fontSize: "14px",
+                          textAlign: "center",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="button compact"
+                        onClick={() => handleDirectExtrasAdjust(parseInt(directAdjustRuns) || 0)}
+                        disabled={busy || !parseInt(directAdjustRuns)}
+                      >
+                        Apply {parseInt(directAdjustRuns) > 0 ? `+${directAdjustRuns}` : directAdjustRuns} to Extras
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* TABS FOR DETAILED INNINGS & PLAYER EDIT */}

@@ -1500,17 +1500,18 @@
     }
   }
 
-  function add(v, r=0, legal=true, wicket=false, persist=true){
+  function add(v, r=0, legal=true, wicket=false, persist=true, isExtra=false){
     const previous = deepClone(state);
     state.score.runs += r;
     if (wicket) state.score.wickets = Math.min(10, state.score.wickets + 1);
     state.score.recent = [...state.score.recent, v].slice(-6);
 
-    // Update bowler figures
-    updateBowlerFigures(r, wicket, legal);
+    // Update bowler figures: in cricket, leg byes and byes are not charged to bowler's runs conceded
+    const bowlerRuns = isExtra ? 0 : r;
+    updateBowlerFigures(bowlerRuns, wicket, legal);
 
-    // Update striker runs and balls
-    if (r > 0 && !wicket) {
+    // Update striker runs and balls: extras are not counted on the batsman
+    if (r > 0 && !wicket && !isExtra) {
       state.live.strikerRuns = String((Number(state.live.strikerRuns) || 0) + r);
     }
     if (legal) {
@@ -1741,6 +1742,16 @@
         add('6',6,true,false,persist);
         playStinger('six', persist);
         break;
+      case'legBye1':add('1LB',1,true,false,persist,true);break;
+      case'legBye2':add('2LB',2,true,false,persist,true);break;
+      case'legBye3':add('3LB',3,true,false,persist,true);break;
+      case'legBye4':add('4LB',4,true,false,persist,true);break;
+      case'legBye':add('LB',1,true,false,persist,true);break;
+      case'bye1':add('1B',1,true,false,persist,true);break;
+      case'bye2':add('2B',2,true,false,persist,true);break;
+      case'bye4':add('4B',4,true,false,persist,true);break;
+      case'bye':add('B',1,true,false,persist,true);break;
+      case'extra':add('EX',1,false,false,persist,true);break;
       case'dot':add('0',0,true,false,persist);break;
       case'wide':
         add('WD',1,false,false,persist);

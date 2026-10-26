@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { applyQuickBall, QUICK_BALL_EVENTS } from "../src/lib/score-events";
+import { applyCustomExtra, applyQuickBall, QUICK_BALL_EVENTS } from "../src/lib/score-events";
 
 test("every quick-score button has a unique delivery and broadcast action", () => {
   assert.equal(new Set(QUICK_BALL_EVENTS.map((event) => event.type)).size, QUICK_BALL_EVENTS.length);
@@ -22,11 +22,27 @@ test("all quick-score outcomes apply the expected totals", () => {
     "0": [10, 2, 6, 1], "1": [11, 2, 6, 1], "2": [12, 2, 6, 1], "3": [13, 2, 6, 1],
     "4": [14, 2, 6, 1], "6": [16, 2, 6, 1], wicket: [10, 3, 6, 1],
     wide: [11, 2, 5, 2], noball: [11, 2, 5, 2],
+    "1lb": [11, 2, 6, 2], "2lb": [12, 2, 6, 3], "4lb": [14, 2, 6, 5], "1b": [11, 2, 6, 2],
   } as const;
   for (const event of QUICK_BALL_EVENTS) {
     const result = applyQuickBall(base, event.type);
     assert.deepEqual([result.runs, result.wickets, result.balls, result.extras], expected[event.type]);
   }
+});
+
+test("custom extras apply user-specified runs without counting against batsmen", () => {
+  const base = { runs: 50, wickets: 3, balls: 20, extras: 4 };
+  const customLb = applyCustomExtra(base, { category: "LB", runs: 3 });
+  assert.equal(customLb.runs, 53);
+  assert.equal(customLb.extras, 7);
+  assert.equal(customLb.balls, 21); // legal ball
+  assert.equal(customLb.isLegal, true);
+
+  const customPen = applyCustomExtra(base, { category: "PEN", runs: 5, isLegal: false });
+  assert.equal(customPen.runs, 55);
+  assert.equal(customPen.extras, 9);
+  assert.equal(customPen.balls, 20); // penalty does not advance ball
+  assert.equal(customPen.isLegal, false);
 });
 
 test("broadcast receiver does not turn ordinary runs into the FOUR fallback banner", () => {
