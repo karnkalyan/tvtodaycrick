@@ -302,3 +302,29 @@ test("output graphics rely on WebSocket events when connected and skip active HT
   assert.match(appJs, /if \(!force && broadcastWs && broadcastWs\.readyState === WebSocket\.OPEN\) return;/);
   assert.match(kashtrixOutput, /if \(connectedRef\.current\) return;/);
 });
+
+test("scorebar and graphic layers stay hidden by default unless explicitly enabled by operator", () => {
+  const mockMatch = {
+    id: 192,
+    title: "Karnali Yaks vs Janakpur Bolts",
+    matchNumber: "Season3-M3",
+    status: "LIVE",
+    homeTeamId: 1,
+    awayTeamId: 2,
+    homeTeam: { id: 1, name: "Karnali Yaks", shortName: "KAY" },
+    awayTeam: { id: 2, name: "Janakpur Bolts", shortName: "JAB" },
+    innings: [
+      { id: 1, inningsNumber: 1, teamId: 1, runs: 87, wickets: 5, balls: 78, extras: 2, status: "LIVE" },
+    ],
+  };
+
+  const state = buildBroadcastStateFromMatch(mockMatch);
+  const ui = state.ui as any;
+  assert.equal(ui.scoreMode, "hidden");
+  assert.equal(ui.graphic, null);
+  assert.equal(ui.operatorControlled, false);
+
+  const appJs = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
+  assert.match(appJs, /state\.ui\.scoreMode = 'hidden';\s*state\.ui\.graphic = null;\s*state\.ui\.operatorControlled = false;/);
+  assert.match(appJs, /const incomingOp = incomingState\?\.ui\?\.operatorControlled === true;/);
+});

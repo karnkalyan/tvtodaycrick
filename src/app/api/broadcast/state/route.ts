@@ -62,8 +62,20 @@ export async function GET(request: Request) {
       );
     }
 
+    const rawState = record.state as Record<string, any>;
+    const rawUi = rawState?.ui && typeof rawState.ui === "object" ? rawState.ui : {};
+    const normalizedState = {
+      ...rawState,
+      ui: {
+        ...rawUi,
+        graphic: rawUi.operatorControlled === true ? (rawUi.graphic ?? null) : null,
+        scoreMode: rawUi.operatorControlled === true ? (rawUi.scoreMode ?? "hidden") : "hidden",
+        operatorControlled: rawUi.operatorControlled === true,
+      },
+    };
+
     return NextResponse.json(
-      { state: record.state, updatedAt: record.updatedAt },
+      { state: normalizedState, updatedAt: record.updatedAt },
       { headers: { "Cache-Control": "no-store, max-age=0" } },
     );
   } catch (error) {
@@ -82,6 +94,18 @@ export async function POST(request: Request) {
     }
 
     const isResetAction = action === "reset" || action === "resetMatch" || body.reset === true;
+    const isLayerAction =
+      action === "show" ||
+      action === "scoreMode" ||
+      action === "hideScores" ||
+      action === "stopLayer" ||
+      action === "stopAll" ||
+      action === "clear" ||
+      /^show\s+/i.test(String(action || "")) ||
+      /^score mode\s+/i.test(String(action || "")) ||
+      /^scoreMode\s+/i.test(String(action || "")) ||
+      /^stopLayer\s+/i.test(String(action || "")) ||
+      /^hide scores/i.test(String(action || ""));
 
     // Score entry and the broadcast director own different parts of the same
     // document. Merge partial writes so one client cannot erase another
@@ -90,7 +114,21 @@ export async function POST(request: Request) {
       const existing = await (tx as any).broadcastState.findUnique({
         where: { id: "current" },
       });
+      const existingUi = (existing?.state as any)?.ui || {};
       const mergedState = isResetAction ? state : mergeBroadcastState(existing?.state, state);
+      const mergedUi = (mergedState.ui && typeof mergedState.ui === "object") ? (mergedState.ui as Record<string, any>) : {};
+      if (isResetAction) {
+        mergedState.ui = { ...mergedUi, graphic: null, scoreMode: "hidden", operatorControlled: false };
+      } else if (isLayerAction || state?.ui?.operatorControlled === true) {
+        mergedState.ui = { ...mergedUi, operatorControlled: true };
+      } else {
+        mergedState.ui = {
+          ...mergedUi,
+          graphic: existingUi.operatorControlled === true ? (existingUi.graphic ?? null) : null,
+          scoreMode: existingUi.operatorControlled === true ? (existingUi.scoreMode ?? "hidden") : "hidden",
+          operatorControlled: existingUi.operatorControlled === true,
+        };
+      }
       return (tx as any).broadcastState.upsert({
         where: { id: "current" },
         create: { id: "current", state: mergedState },

@@ -483,7 +483,8 @@ export function buildBroadcastStateFromMatch(
     bowling: bowling.length ? bowling : (DEFAULT_BROADCAST_STATE.bowling as any),
     ui: {
       graphic: null,
-      scoreMode: "scorebar",
+      scoreMode: "hidden",
+      operatorControlled: false,
     },
   };
 }
@@ -503,6 +504,12 @@ export async function syncMatchToBroadcastDb(
 
   const generatedUi = (generated.ui && typeof generated.ui === "object") ? (generated.ui as Record<string, unknown>) : {};
   const existingUi = (existingState?.ui && typeof existingState.ui === "object") ? (existingState.ui as Record<string, unknown>) : {};
+  const sanitizedExistingUi: Record<string, unknown> = {
+    ...existingUi,
+    graphic: existingUi.operatorControlled === true ? (existingUi.graphic ?? null) : null,
+    scoreMode: existingUi.operatorControlled === true ? (existingUi.scoreMode ?? "hidden") : "hidden",
+    operatorControlled: existingUi.operatorControlled === true,
+  };
 
   // Preserve real recent deliveries if we are updating the same match/innings and generated recent is empty placeholders
   const genScore = (generated.score && typeof generated.score === "object") ? { ...(generated.score as Record<string, any>) } : {};
@@ -557,7 +564,7 @@ export async function syncMatchToBroadcastDb(
     score: genScore,
     ui: {
       ...generatedUi,
-      ...existingUi,
+      ...sanitizedExistingUi,
     },
     ...(pointsRows ? { points: pointsRows } : existingState?.points ? { points: existingState.points } : {}),
   };

@@ -106,7 +106,7 @@ export default function BroadcastControllerPage() {
   const [wsConnected, setWsConnected] = useState(false);
 
   // Helper to apply incoming database or socket state
-  const applyState = (saved: any) => {
+  const applyState = (saved: any, includeUi = false) => {
     if (!saved) return;
     if (Number(saved.match?.matchId) > 0) {
       setSelectedMatchId((current) => {
@@ -135,11 +135,17 @@ export default function BroadcastControllerPage() {
     if (saved.live?.requirement) setRequirement(saved.live.requirement);
     if (saved.live?.innings) setInnings(saved.live.innings);
     if (saved.live?.rateText) setRateText(saved.live.rateText);
-    if (saved.ui?.scoreMode) setScoreMode(saved.ui.scoreMode);
     if (Number(saved.ui?.autoSpeed) >= 2500) setAutoSpeed(Number(saved.ui.autoSpeed));
-    if (saved.ui?.graphic !== undefined) {
-      const restoredGraphic = saved.ui.graphic;
-      setActiveGraphic(restoredGraphic || null);
+    if (includeUi) {
+      if (saved.ui?.operatorControlled === true) {
+        if (saved.ui?.scoreMode) setScoreMode(saved.ui.scoreMode);
+        if (saved.ui?.graphic !== undefined) {
+          setActiveGraphic(saved.ui.graphic || null);
+        }
+      } else {
+        setScoreMode("hidden");
+        setActiveGraphic(null);
+      }
     }
   };
 
@@ -199,7 +205,7 @@ export default function BroadcastControllerPage() {
             const msg = JSON.parse(e.data);
             const actionType = msg.action || msg.type;
             if (actionType === "init" && msg.state) {
-              applyState(msg.state);
+              applyState(msg.state, true);
             } else if (actionType === "show") {
               const id = msg.id || msg.data?.id;
               if (id === "scorebar" || id === "compactBug") {
@@ -209,15 +215,19 @@ export default function BroadcastControllerPage() {
               }
             } else if (actionType === "clear" || actionType === "stopAll") {
               setActiveGraphic(null);
+              setScoreMode("hidden");
             } else if (actionType === "stopLayer") {
               const id = msg.id || msg.layer;
+              if (id === "scorebar" || id === "compactBug") {
+                setScoreMode("hidden");
+              }
               if (id === activeGraphic) setActiveGraphic(null);
             } else if (actionType === "scoreMode") {
-              setScoreMode(msg.mode || msg.data?.mode || "scorebar");
+              setScoreMode(msg.mode || msg.data?.mode || "hidden");
             } else if (actionType === "hideScores") {
               setScoreMode("hidden");
             } else if (actionType === "updateData" || actionType === "dataUpdated") {
-              applyState(msg.payload || msg.data);
+              applyState(msg.payload || msg.data, false);
             }
           } catch {}
         };
@@ -245,14 +255,14 @@ export default function BroadcastControllerPage() {
         if (res.ok) {
           const data = await res.json();
           if (data?.state) {
-            applyState(data.state);
+            applyState(data.state, true);
             return;
           }
         }
       } catch {}
       try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-        if (saved) applyState(saved);
+        if (saved) applyState(saved, false);
       } catch {}
     }
     loadDbState();
@@ -277,8 +287,9 @@ export default function BroadcastControllerPage() {
           }
         } else if (actionType === "clear" || actionType === "stopAll") {
           setActiveGraphic(null);
+          setScoreMode("hidden");
         } else if (actionType === "scoreMode") {
-          setScoreMode(msg.mode || msg.data?.mode || "scorebar");
+          setScoreMode(msg.mode || msg.data?.mode || "hidden");
         } else if (actionType === "hideScores") {
           setScoreMode("hidden");
         }
@@ -318,12 +329,17 @@ export default function BroadcastControllerPage() {
       // 4. MySQL DB Persistence
       let nextGraphic: string | null = activeGraphic;
       let nextScoreMode = scoreMode;
+      const isLayerCue =
+        action === "show" ||
+        action === "scoreMode" ||
+        action === "hideScores" ||
+        action === "stopLayer" ||
+        action === "stopAll" ||
+        action === "clear";
 
       if (action === "stopAll" || action === "clear") {
         nextGraphic = null;
-        if (payload.clearScores || activeGraphic === "scorebar" || activeGraphic === "compactBug") {
-          nextScoreMode = "hidden";
-        }
+        nextScoreMode = "hidden";
       } else if (action === "stopLayer") {
         const id = (payload.id || payload.layer) as string;
         if (id === "scorebar" || id === "compactBug") {
@@ -374,6 +390,7 @@ export default function BroadcastControllerPage() {
       };
 
       const incomingUi = incoming.ui && typeof incoming.ui === "object" ? incoming.ui : {};
+      const isOperatorLayerActive = isLayerCue || nextScoreMode !== "hidden" || nextGraphic !== null;
       const stateToPersist = isDataCue
         ? {
             ...incoming,
@@ -384,6 +401,7 @@ export default function BroadcastControllerPage() {
               ...incomingUi,
               scoreMode: nextScoreMode,
               graphic: nextGraphic,
+              operatorControlled: isOperatorLayerActive,
               autoSync: typeof incomingUi.autoSync === "boolean" ? incomingUi.autoSync : season.autoSync,
               autoSpeed: Number(incomingUi.autoSpeed) || autoSpeed,
             },
@@ -394,6 +412,7 @@ export default function BroadcastControllerPage() {
               ...incomingUi,
               scoreMode: nextScoreMode,
               graphic: nextGraphic,
+              operatorControlled: isOperatorLayerActive,
               autoSync: typeof incomingUi.autoSync === "boolean" ? incomingUi.autoSync : season.autoSync,
               autoSpeed: Number(incomingUi.autoSpeed) || autoSpeed,
             },
@@ -455,12 +474,9 @@ export default function BroadcastControllerPage() {
   };
 
   const clearAllGraphics = () => {
-    const wasScore = activeGraphic === "scorebar" || activeGraphic === "compactBug";
-    if (wasScore) {
-      setScoreMode("hidden");
-    }
+    setScoreMode("hidden");
     setActiveGraphic(null);
-    sendCue("stopAll", { clearScores: wasScore });
+    sendCue("stopAll", { clearScores: true });
   };
 
   const triggerStinger = (event: string) => {

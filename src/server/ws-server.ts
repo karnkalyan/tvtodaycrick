@@ -36,13 +36,28 @@ function updateRecentDeliveries(actionName: string) {
     : [...current, delivery.token];
 }
 
+function sanitizeStateUi(state: any) {
+  if (!state || typeof state !== "object") return structuredClone(DEFAULT_BROADCAST_STATE);
+  const rawUi = state.ui && typeof state.ui === "object" ? state.ui : {};
+  const isOperatorControlled = rawUi.operatorControlled === true;
+  return {
+    ...state,
+    ui: {
+      ...rawUi,
+      graphic: isOperatorControlled ? (rawUi.graphic ?? null) : null,
+      scoreMode: isOperatorControlled ? (rawUi.scoreMode ?? "hidden") : "hidden",
+      operatorControlled: isOperatorControlled,
+    },
+  };
+}
+
 async function initDbState() {
   try {
     const record = await (prisma as any).broadcastState.findUnique({
       where: { id: "current" },
     });
     if (record?.state) {
-      latestState = record.state;
+      latestState = sanitizeStateUi(record.state);
       if (record.updatedAt) {
         lastDbTimestamp = new Date(record.updatedAt).getTime();
       }
@@ -122,14 +137,14 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
         const time = new Date(record.updatedAt).getTime();
         if (lastDbTimestamp === 0) {
           lastDbTimestamp = time;
-          latestState = record.state;
+          latestState = sanitizeStateUi(record.state);
         } else if (time > lastDbTimestamp) {
           lastDbTimestamp = time;
-          latestState = record.state;
+          latestState = sanitizeStateUi(record.state);
           const msg = JSON.stringify({
             action: "updateData",
             type: "updateData",
-            payload: record.state,
+            payload: latestState,
             timestamp: time,
           });
           wss.clients.forEach((client) => {
@@ -151,7 +166,7 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
         where: { id: "current" },
       });
       if (record?.state) {
-        latestState = record.state;
+        latestState = sanitizeStateUi(record.state);
       } else {
         latestState = structuredClone(DEFAULT_BROADCAST_STATE);
       }
@@ -172,10 +187,11 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
 
         if (actionType === "reset" || actionType === "resetMatch") {
           latestState = structuredClone(msg.state || DEFAULT_BROADCAST_STATE);
+          latestState.ui = { ...(latestState.ui || {}), graphic: null, scoreMode: "hidden", operatorControlled: false };
           persistState("reset", undefined, msg);
         } else {
           if (!latestState) latestState = structuredClone(DEFAULT_BROADCAST_STATE);
-          if (!latestState.ui) latestState.ui = {};
+          if (!latestState.ui) latestState.ui = { graphic: null, scoreMode: "hidden", operatorControlled: false };
         }
 
 
@@ -187,12 +203,12 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
           } else {
             latestState.ui.graphic = graphicId;
           }
+          latestState.ui.operatorControlled = true;
           persistState("show", graphicId, msg);
         } else if (actionType === "stopAll" || actionType === "clear") {
           latestState.ui.graphic = null;
-          if (msg.clearScores || msg.stopScores) {
-            latestState.ui.scoreMode = "hidden";
-          }
+          latestState.ui.scoreMode = "hidden";
+          latestState.ui.operatorControlled = true;
           persistState("stopAll", "all", msg);
         } else if (actionType === "stopLayer") {
           const graphicId = msg.id || msg.layer;
@@ -201,17 +217,22 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
           } else if (latestState.ui.graphic === graphicId) {
             latestState.ui.graphic = null;
           }
+          latestState.ui.operatorControlled = true;
           persistState("stopLayer", graphicId, msg);
         } else if (actionType === "scoreMode") {
-          latestState.ui.scoreMode = msg.mode || msg.data?.mode;
+          latestState.ui.scoreMode = msg.mode || msg.data?.mode || "hidden";
+          latestState.ui.operatorControlled = true;
           persistState("scoreMode", latestState.ui.scoreMode, msg);
         } else if (actionType === "hideScores") {
           latestState.ui.scoreMode = "hidden";
+          latestState.ui.operatorControlled = true;
           persistState("hideScores", "scoreMode", msg);
         } else if (actionType === "updateData" || actionType === "dataUpdated") {
           const rawPayload = msg.payload || msg.data || msg || {};
-          const { action: _a, type: _t, timestamp: _ts, ...cleanPayload } = rawPayload;
+          const { action: _a, type: _t, timestamp: _ts, ui: _ui, ...cleanPayload } = rawPayload;
+          const preservedUi = sanitizeStateUi(latestState).ui;
           latestState = mergeBroadcastState(latestState || DEFAULT_BROADCAST_STATE, cleanPayload);
+          latestState.ui = preservedUi;
           persistState("updateData", undefined, { ...msg, payload: latestState });
           const enrichedText = JSON.stringify({
             ...msg,

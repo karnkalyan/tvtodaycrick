@@ -279,7 +279,12 @@
   } catch {
     state = deepClone(defaults);
   }
-  // Layer graphic state is preserved from storage / DB on refresh
+  // Never auto-enable scorebar or graphic layers from localStorage on boot;
+  // layers only show when explicitly enabled by the operator or URL parameter.
+  if (!state.ui) state.ui = deepClone(defaults.ui);
+  state.ui.scoreMode = 'hidden';
+  state.ui.graphic = null;
+  state.ui.operatorControlled = false;
 
   function fit(){
     const scale=Math.min(innerWidth/1920,innerHeight/1080);
@@ -1160,6 +1165,7 @@
   }
 
   function show(id,publish=true, persist=publish){
+    state.ui.operatorControlled=true;
     if(id==='scorebar'||id==='compactBug'){
       state.ui.scoreMode=id;
       applyVisibility(true);
@@ -1204,6 +1210,8 @@
 
   function clearGraphics(publish=true, persist=publish){
     stopDemo(false,false);
+    state.ui.scoreMode='hidden';
+    state.ui.operatorControlled=true;
     clearTransientLocal();
     const lt=$('#lowerThird');if(lt)animateOut(lt);
     state.ui.graphic=null;
@@ -1213,6 +1221,8 @@
 
   function stopAll(publish=true, persist=publish){
     stopDemo(false,false);
+    state.ui.scoreMode='hidden';
+    state.ui.operatorControlled=true;
     clearTransientLocal();
     const lt=$('#lowerThird');if(lt)animateOut(lt);
     state.ui.graphic=null;
@@ -1228,6 +1238,7 @@
       case 'show': {
         const id = msg.id || msg.data?.id;
         if(id){
+          state.ui.operatorControlled = true;
           if(id === 'scorebar' || id === 'compactBug'){
             state.ui.scoreMode = id;
             applyVisibility(true);
@@ -1248,20 +1259,21 @@
         state = deepClone(defaults);
         state.ui.graphic = null;
         state.ui.scoreMode = 'hidden';
+        state.ui.operatorControlled = false;
         render(prev, false);
         saveState('reset', false);
         break;
       }
       case 'stopAll': {
-        if(msg.clearScores || msg.stopScores){
-          state.ui.scoreMode = 'hidden';
-        }
+        state.ui.scoreMode = 'hidden';
+        state.ui.operatorControlled = true;
         stopAll(false, false);
         break;
       }
       case 'stopLayer': {
         const id = msg.id || msg.layer;
         if(id){
+          state.ui.operatorControlled = true;
           if(id === 'scorebar' || id === 'compactBug'){
             state.ui.scoreMode = 'hidden';
             applyVisibility(true);
@@ -1276,7 +1288,7 @@
       }
       case 'init': {
         if(msg.state){
-          state = merge(defaults, msg.state);
+          state = mergeIncomingFullState(msg.state);
           render(prev, false);
         }
         break;
@@ -1299,6 +1311,7 @@
         const mode = msg.mode || msg.data?.mode;
         if(mode){
           state.ui.scoreMode = mode;
+          state.ui.operatorControlled = true;
           applyVisibility(true);
           saveState('scoreMode ' + mode, false);
         }
@@ -1306,6 +1319,7 @@
       }
       case 'hideScores': {
         state.ui.scoreMode = 'hidden';
+        state.ui.operatorControlled = true;
         applyVisibility(true);
         saveState('hideScores', false);
         break;
@@ -1373,7 +1387,7 @@
         try {
           const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
           if(saved){
-            state = merge(state, saved);
+            state = mergeIncomingFullState(saved);
             renderLists();
             renderLive(prev, false);
           }
@@ -1390,7 +1404,7 @@
         const prev=deepClone(state);
         const saved=JSON.parse(e.newValue);
         if(saved){
-          state=merge(state,saved);
+          state=mergeIncomingFullState(saved);
           applyTeamTheme();
           renderLists();
           renderLive(prev, false);
@@ -2037,6 +2051,8 @@
   function mergeIncomingFullState(incomingState){
     const prevPoints = Array.isArray(state?.points) ? deepClone(state.points) : null;
     const prevUiGraphic = state?.ui?.graphic || null;
+    const prevScoreMode = state?.ui?.scoreMode || 'hidden';
+    const prevOperatorControlled = Boolean(state?.ui?.operatorControlled);
     const next = merge(state || defaults, incomingState);
     if (prevPoints && prevPoints.some(r => Number(r[2]) > 0)) {
       const nextHasPlayed = Array.isArray(next.points) && next.points.some(r => Number(r[2]) > 0);
@@ -2044,10 +2060,28 @@
         next.points = prevPoints;
       }
     }
+    const incomingOp = incomingState?.ui?.operatorControlled === true;
     if (pinnedQueryGraphic) {
-      next.ui.graphic = pinnedQueryGraphic;
-    } else if (prevUiGraphic && incomingState?.ui?.graphic === undefined) {
+      if (pinnedQueryGraphic === 'scorebar' || pinnedQueryGraphic === 'compactBug') {
+        next.ui.scoreMode = pinnedQueryGraphic;
+        next.ui.graphic = null;
+      } else {
+        next.ui.graphic = pinnedQueryGraphic;
+        next.ui.scoreMode = 'hidden';
+      }
+      next.ui.operatorControlled = true;
+    } else if (incomingOp) {
+      next.ui.graphic = incomingState.ui.graphic ?? null;
+      next.ui.scoreMode = incomingState.ui.scoreMode ?? 'hidden';
+      next.ui.operatorControlled = true;
+    } else if (prevOperatorControlled) {
       next.ui.graphic = prevUiGraphic;
+      next.ui.scoreMode = prevScoreMode;
+      next.ui.operatorControlled = true;
+    } else {
+      next.ui.graphic = null;
+      next.ui.scoreMode = 'hidden';
+      next.ui.operatorControlled = false;
     }
     return next;
   }
