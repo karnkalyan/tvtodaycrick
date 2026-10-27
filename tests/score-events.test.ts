@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { applyCustomExtra, applyQuickBall, QUICK_BALL_EVENTS } from "../src/lib/score-events";
+import { applyCustomExtra, applyQuickBall, QUICK_BALL_EVENTS, shouldSwapStrike } from "../src/lib/score-events";
 
 test("every quick-score button has a unique delivery and broadcast action", () => {
   assert.equal(new Set(QUICK_BALL_EVENTS.map((event) => event.type)).size, QUICK_BALL_EVENTS.length);
@@ -14,6 +14,33 @@ test("one-run click records one run and maps to the single-run broadcast action"
     { runs: result.runs, wickets: result.wickets, balls: result.balls, extras: result.extras, action: result.event.broadcastAction },
     { runs: 1, wickets: 0, balls: 1, extras: 0, action: "run1" },
   );
+});
+
+test("strike rotation combines completed runs with the end-of-over change", () => {
+  assert.equal(shouldSwapStrike(1, false), true, "odd run during an over changes strike");
+  assert.equal(shouldSwapStrike(1, true), false, "single on ball six leaves the same next-over striker");
+  assert.equal(shouldSwapStrike(0, true), true, "dot on ball six changes striker for the next over");
+  assert.equal(shouldSwapStrike(2, false), false, "even completed runs keep strike");
+});
+
+test("wide and no-ball penalties do not count as completed runs for strike", () => {
+  assert.equal(QUICK_BALL_EVENTS.find((event) => event.type === "wide")?.strikeRuns, 0);
+  assert.equal(QUICK_BALL_EVENTS.find((event) => event.type === "wd1")?.strikeRuns, 1);
+  assert.equal(QUICK_BALL_EVENTS.find((event) => event.type === "noball")?.strikeRuns, 0);
+  assert.equal(QUICK_BALL_EVENTS.find((event) => event.type === "nb1")?.strikeRuns, 1);
+  assert.equal(QUICK_BALL_EVENTS.find((event) => event.type === "nb4")?.strikeRuns, 4);
+
+  assert.equal(applyCustomExtra({ runs: 0, wickets: 0, balls: 0, extras: 0 }, { category: "WD", runs: 1 }).strikeRuns, 0);
+  assert.equal(applyCustomExtra({ runs: 0, wickets: 0, balls: 0, extras: 0 }, { category: "WD", runs: 2 }).strikeRuns, 1);
+  assert.equal(applyCustomExtra({ runs: 0, wickets: 0, balls: 0, extras: 0 }, { category: "PEN", runs: 5 }).strikeRuns, 0);
+});
+
+test("score entry sends the newly rotated batters in the immediate graphics sync", () => {
+  const page = readFileSync(new URL("../src/app/(dashboard)/score-entry/page.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /batterIds\?: \{ strikerId: string; nonStrikerId: string \}/);
+  assert.match(page, /effectiveStrikerId = batterIds\?\.strikerId \?\? strikerId/);
+  assert.match(page, /syncMatchToBroadcast\(refreshed, activeInnings, nextBatterIds\)/);
 });
 
 test("all quick-score outcomes apply the expected totals", () => {

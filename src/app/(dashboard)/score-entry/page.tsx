@@ -35,6 +35,7 @@ import { api, jsonBody } from "@/lib/client-api";
 import {
   applyCustomExtra,
   applyQuickBall,
+  shouldSwapStrike,
   QUICK_BALL_EVENTS,
   type QuickBallType,
   type ExtraCategory,
@@ -431,7 +432,11 @@ export default function ScoreEntryPage() {
   };
 
   // Sync current match score to broadcast graphics engine
-  const syncMatchToBroadcast = async (freshMatch?: Match, inningsOverride?: 1 | 2) => {
+  const syncMatchToBroadcast = async (
+    freshMatch?: Match,
+    inningsOverride?: 1 | 2,
+    batterIds?: { strikerId: string; nonStrikerId: string },
+  ) => {
     const sourceMatch = freshMatch || match;
     if (!sourceMatch) return;
     const sourceInn1 = freshMatch ? toInn(freshMatch, 1) : inn1;
@@ -524,12 +529,14 @@ export default function ScoreEntryPage() {
         ];
       });
 
-    const striker = battingTeam.players?.find((p) => String(p.id) === strikerId);
-    const nonStriker = battingTeam.players?.find((p) => String(p.id) === nonStrikerId);
+    const effectiveStrikerId = batterIds?.strikerId ?? strikerId;
+    const effectiveNonStrikerId = batterIds?.nonStrikerId ?? nonStrikerId;
+    const striker = battingTeam.players?.find((p) => String(p.id) === effectiveStrikerId);
+    const nonStriker = battingTeam.players?.find((p) => String(p.id) === effectiveNonStrikerId);
     const bowler = bowlingTeam.players?.find((p) => String(p.id) === bowlerId);
 
-    const strikerStat = innStats.find((s) => String(s.playerId) === strikerId);
-    const nonStrikerStat = innStats.find((s) => String(s.playerId) === nonStrikerId);
+    const strikerStat = innStats.find((s) => String(s.playerId) === effectiveStrikerId);
+    const nonStrikerStat = innStats.find((s) => String(s.playerId) === effectiveNonStrikerId);
     const bowlerStat = innStats.find((s) => String(s.playerId) === bowlerId);
 
     const ballsInOver = bOvers % 6 || (bOvers > 0 ? 6 : 0);
@@ -910,16 +917,18 @@ export default function ScoreEntryPage() {
       }
 
       const overEnded = event.legalBalls > 0 && result.balls % 6 === 0;
-      const oddRuns = event.runs % 2 === 1 && type !== "wicket";
-      if (oddRuns !== overEnded) {
-        const previousStriker = strikerId;
-        setStrikerId(nonStrikerId);
-        setNonStrikerId(previousStriker);
+      const swapStrike = type !== "wicket" && shouldSwapStrike(event.strikeRuns, overEnded);
+      const nextBatterIds = swapStrike
+        ? { strikerId: nonStrikerId, nonStrikerId: strikerId }
+        : { strikerId, nonStrikerId };
+      if (swapStrike) {
+        setStrikerId(nextBatterIds.strikerId);
+        setNonStrikerId(nextBatterIds.nonStrikerId);
       }
 
       setToast(`Ball recorded: ${event.label}${event.isExtra ? " (Extra - not counted on batter)" : ""}`);
       const refreshed = await loadDetail(match.id);
-      await syncMatchToBroadcast(refreshed);
+      await syncMatchToBroadcast(refreshed, activeInnings, nextBatterIds);
       await fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not record delivery");
@@ -1085,17 +1094,19 @@ export default function ScoreEntryPage() {
       }
 
       const overEnded = isLegal && result.balls % 6 === 0;
-      const oddRuns = runs % 2 === 1;
-      if (oddRuns !== overEnded) {
-        const previousStriker = strikerId;
-        setStrikerId(nonStrikerId);
-        setNonStrikerId(previousStriker);
+      const swapStrike = shouldSwapStrike(result.strikeRuns, overEnded);
+      const nextBatterIds = swapStrike
+        ? { strikerId: nonStrikerId, nonStrikerId: strikerId }
+        : { strikerId, nonStrikerId };
+      if (swapStrike) {
+        setStrikerId(nextBatterIds.strikerId);
+        setNonStrikerId(nextBatterIds.nonStrikerId);
       }
 
       setToast(`Extra recorded: +${runs} ${catLabel} (not counted on player)`);
       setShowCustomExtra(false);
       const refreshed = await loadDetail(match.id);
-      await syncMatchToBroadcast(refreshed);
+      await syncMatchToBroadcast(refreshed, activeInnings, nextBatterIds);
       await fetchUndoHistory(match.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not record extra delivery");
