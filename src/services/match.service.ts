@@ -4,12 +4,50 @@ import type { Prisma } from "@prisma/client";
 import { journaledWrite, scoreUndoService, type UndoMeta } from "./score-undo.service";
 import { DEFAULT_BROADCAST_STATE } from "@/lib/broadcast-state";
 
+const matchOrdinal = (value: unknown) => {
+  const text = String(value || "");
+  const match = text.match(/M(?:ATCH)?\s*0*(\d+)/i);
+  return match ? Number(match[1]) : null;
+};
+
+const canonicalMatchKey = (match: any) => {
+  const ordinal = matchOrdinal(match.matchNumber) ?? matchOrdinal(match.title);
+  if (!ordinal) return `id:${match.id}`;
+  const teams = [match.homeTeamId, match.awayTeamId].map(Number).sort((a, b) => a - b).join(":");
+  return `match:${ordinal}:${teams}`;
+};
+
+const canonicalPriority = (match: any) => {
+  const number = String(match.matchNumber || "");
+  const sourcePriority = /^Season3-M\d+$/i.test(number) ? 100 : /^Match\s*\d+$/i.test(number) ? 50 : 0;
+  const statusPriority = match.status === "LIVE" ? 30 : match.status === "COMPLETED" ? 20 : 10;
+  return sourcePriority + statusPriority + (Array.isArray(match.innings) ? match.innings.length : 0);
+};
+
+/** Hide legacy aliases such as Season3-M2 and Match 2 from fixture pickers. */
+export function dedupeMatchAliases<T extends { id: number; matchNumber?: string | null; title?: string | null; homeTeamId: number; awayTeamId: number; status?: string; innings?: unknown[] }>(rows: T[]): T[] {
+  const selected = new Map<string, T>();
+  for (const row of rows) {
+    const key = canonicalMatchKey(row);
+    const existing = selected.get(key);
+    if (!existing || canonicalPriority(row) > canonicalPriority(existing)) selected.set(key, row);
+  }
+  return [...selected.values()].sort((a, b) => {
+    const aOrdinal = matchOrdinal(a.matchNumber) ?? 999;
+    const bOrdinal = matchOrdinal(b.matchNumber) ?? 999;
+    return aOrdinal - bOrdinal || a.id - b.id;
+  });
+}
+
 export const matchService = {
-  list: (year = "2026") => prisma.match.findMany({
-    where: { OR: [{ tournament: { season: year } }, { tournamentId: null }] },
-    include: { tournament: true, homeTeam: true, awayTeam: true, winnerTeam: true, toss: { include: { winnerTeam: true } }, innings: { include: { team: true }, orderBy: { inningsNumber: "asc" } } },
-    orderBy: { startTime: "asc" },
-  }),
+  list: async (year = "2026") => {
+    const rows = await prisma.match.findMany({
+      where: { OR: [{ tournament: { season: year } }, { tournamentId: null }] },
+      include: { tournament: true, homeTeam: true, awayTeam: true, winnerTeam: true, toss: { include: { winnerTeam: true } }, innings: { include: { team: true }, orderBy: { inningsNumber: "asc" } } },
+      orderBy: { startTime: "asc" },
+    });
+    return dedupeMatchAliases(rows);
+  },
   get: async (id: number) => { const match = await prisma.match.findUnique({
     where: { id },
     include: {
@@ -128,4 +166,3 @@ export const matchService = {
     return result;
   },
 };
-
