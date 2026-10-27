@@ -24,6 +24,7 @@ import {
 import { PageHeader } from "@/components/common";
 import { NPL_FRANCHISE_BRANDS } from "@/lib/npl-franchises";
 import { readSelectedMatchId, writeSelectedMatchId } from "@/lib/selected-match";
+import { useSeason } from "@/components/season-context";
 
 const CHANNEL_NAME = "npl-gfx-v8-cues";
 const STORAGE_KEY = "npl-gfx-v8-state";
@@ -57,6 +58,8 @@ const normalizeCode = (raw: string) => {
 };
 
 export default function BroadcastControllerPage() {
+  const season = useSeason();
+  const isAutoMode = season.autoSync;
   const [tab, setTab] = useState<"live" | "graphics" | "events" | "data" | "motion">("live");
   const [chromaMode, setChromaMode] = useState<"transparent" | "green" | "dark">("dark");
   const [copied, setCopied] = useState(false);
@@ -86,7 +89,6 @@ export default function BroadcastControllerPage() {
   const [syncStatus, setSyncStatus] = useState("CUE READY");
 
   // Autonomous broadcast engine & NPL database linking
-  const [isAutoMode, setIsAutoMode] = useState(false);
   const [autoSpeed, setAutoSpeed] = useState(4000); // 4000ms default
   const [autoLogs, setAutoLogs] = useState<string[]>([
     "Studio initialized. Ready for Autonomous / Director control.",
@@ -96,6 +98,7 @@ export default function BroadcastControllerPage() {
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
   const [liveSyncing, setLiveSyncing] = useState(false);
   const autoLoopTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const syncInFlightRef = useRef(false);
 
   const channelRef = useRef<BroadcastChannel | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -133,6 +136,7 @@ export default function BroadcastControllerPage() {
     if (saved.live?.innings) setInnings(saved.live.innings);
     if (saved.live?.rateText) setRateText(saved.live.rateText);
     if (saved.ui?.scoreMode) setScoreMode(saved.ui.scoreMode);
+    if (Number(saved.ui?.autoSpeed) >= 2500) setAutoSpeed(Number(saved.ui.autoSpeed));
     if (saved.ui?.graphic !== undefined) {
       const restoredGraphic = saved.ui.graphic;
       setActiveGraphic(restoredGraphic || null);
@@ -345,7 +349,7 @@ export default function BroadcastControllerPage() {
         nextScoreMode = payload.mode as any;
       }
 
-      const incoming = action === "updateData" || action === "dataUpdated"
+      const incoming = action === "updateData" || action === "dataUpdated" || action === "automation"
         ? ((payload.payload as Record<string, any> | undefined) || payload)
         : {};
       const persistedMatch = { teamA, teamB, ...(incoming.match || {}) };
@@ -368,19 +372,22 @@ export default function BroadcastControllerPage() {
         ...(incoming.live || {}),
       };
 
+      const incomingUi = incoming.ui && typeof incoming.ui === "object" ? incoming.ui : {};
       fetch("/api/broadcast/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           state: {
+            ...incoming,
             match: persistedMatch,
             score: persistedScore,
             live: persistedLive,
-            ...(incoming.fow !== undefined ? { fow: incoming.fow } : {}),
-            ...(incoming.points !== undefined ? { points: incoming.points } : {}),
             ui: {
+              ...incomingUi,
               scoreMode: nextScoreMode,
               graphic: nextGraphic,
+              autoSync: typeof incomingUi.autoSync === "boolean" ? incomingUi.autoSync : season.autoSync,
+              autoSpeed: Number(incomingUi.autoSpeed) || autoSpeed,
             },
           },
           action,
@@ -394,6 +401,11 @@ export default function BroadcastControllerPage() {
     } catch {
       // ignore
     }
+  };
+
+  const setAndPersistAutoSpeed = (speed: number) => {
+    setAutoSpeed(speed);
+    sendCue("automation", { ui: { autoSync: isAutoMode, autoSpeed: speed } });
   };
 
   // Cue functions
@@ -771,9 +783,65 @@ export default function BroadcastControllerPage() {
 
   // Autonomous Real NPL Data Synchronization Engine
   // Fetches actual data from /api/npl/live and /api/broadcast/npl-data without generating fake simulation
-  const syncAutoFeed = async () => {
+  const syncAutoFeed = async ({ manual = false }: { manual?: boolean } = {}) => {
+    // A manual Live Sync button press is still allowed, but background calls
+    // must never restart or continue syncing after the operator stops auto
+    // sync.
+    if (!isAutoMode && !manual) return;
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
     setLiveSyncing(true);
     try {
+      // A selected fixture must refresh its own authoritative source before we
+      // read or render database state. Previously this branch only re-read the
+      // stale database, so Match 2 could keep showing Match 1's players/score.
+      if (selectedMatchId) {
+        const sourceRes = await fetch(`/api/matches/${selectedMatchId}/sync-source`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ forceOverwrite: true }),
+        });
+        const sourceJson = await sourceRes.json().catch(() => null);
+        if (!sourceRes.ok || !sourceJson?.success) {
+          throw new Error(sourceJson?.message || sourceJson?.error || `Source sync failed (${sourceRes.status})`);
+        }
+
+        const synced = sourceJson.data?.broadcastState;
+        if (!synced?.match || Number(synced.match.matchId) !== selectedMatchId) {
+          throw new Error("Source sync returned state for a different match");
+        }
+
+        const liveRuns = Number(synced.score?.runs) || 0;
+        const liveWickets = Number(synced.score?.wickets) || 0;
+        if (prevLiveScoreRef.current) {
+          const previous = prevLiveScoreRef.current;
+          if (liveWickets > previous.wickets) triggerStinger("wicket");
+          else if (liveRuns - previous.runs === 4) triggerStinger("four");
+          else if (liveRuns - previous.runs === 6) triggerStinger("six");
+        }
+        prevLiveScoreRef.current = {
+          runs: liveRuns,
+          wickets: liveWickets,
+          strikerRuns: Number(synced.live?.strikerRuns) || 0,
+        };
+
+        applyState(synced);
+        sendCue("updateData", { payload: synced });
+
+        const refreshedDataRes = await fetch("/api/broadcast/npl-data", { cache: "no-store" });
+        if (refreshedDataRes.ok) {
+          const refreshedData = await refreshedDataRes.json();
+          setNplMatches(refreshedData.matches || []);
+          setNplTeams(refreshedData.teams || []);
+        }
+
+        setAutoLogs((previous) => [
+          `[${new Date().toLocaleTimeString()}] LIVE SOURCE SYNC: Match ${selectedMatchId} · ${liveRuns}/${liveWickets} (${synced.score?.overs || "0.0"} ov) · ${synced.score?.recent?.length || 0} deliveries in current over.`,
+          ...previous.slice(0, 15),
+        ]);
+        return;
+      }
+
       // Only use the generic external live match when no fixture is selected.
       // Once selected, the database branch below remains pinned to that match.
       const liveRes = selectedMatchId ? null : await fetch("/api/npl/live");
@@ -856,7 +924,7 @@ export default function BroadcastControllerPage() {
           // Build clean points table from active standings
           const activePoints = (dbData.standings || []).map((s: any, idx: number) => [
             String(idx + 1),
-            s.team?.shortName || s.team?.name || "KAG",
+            s.teamCode || s.team?.shortName || s.team?.name || "KAG",
             String(s.played || 0),
             String(s.won || 0),
             String(s.lost || 0),
@@ -996,10 +1064,21 @@ export default function BroadcastControllerPage() {
       }
     } catch (err) {
       console.error("Auto sync feed error:", err);
+      setAutoLogs((previous) => [
+        `[${new Date().toLocaleTimeString()}] SOURCE SYNC ERROR: ${err instanceof Error ? err.message : "Unknown error"}`,
+        ...previous.slice(0, 15),
+      ]);
     } finally {
+      syncInFlightRef.current = false;
       setLiveSyncing(false);
     }
   };
+
+  // Selecting (or restoring) a fixture immediately refreshes its source only
+  // while auto-sync is enabled. Manual mode remains fully operator-controlled.
+  useEffect(() => {
+    if (selectedMatchId && isAutoMode) void syncAutoFeed();
+  }, [selectedMatchId, isAutoMode]);
 
   // Autonomous loop runner: purely synchronizes real data and detects real events
   useEffect(() => {
@@ -1200,35 +1279,6 @@ export default function BroadcastControllerPage() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "14px" }}>
           {/* Left: Mode Toggle & Status */}
           <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-            <button
-              type="button"
-              className={`button ${isAutoMode ? "brand" : "secondary"}`}
-              style={{
-                height: "44px",
-                padding: "0 22px",
-                fontSize: "14px",
-                fontWeight: 850,
-                letterSpacing: "0.5px",
-                borderRadius: "10px",
-                boxShadow: isAutoMode ? "0 0 16px rgba(37, 99, 235, 0.6)" : "none",
-              }}
-              onClick={() => {
-                const nextMode = !isAutoMode;
-                setIsAutoMode(nextMode);
-                setAutoLogs((prev) => [
-                  `[${new Date().toLocaleTimeString()}] ${
-                    nextMode
-                      ? "⚡ AUTO SYNC ACTIVATED: Synchronizing authentic live NPL data & genuine stinger triggers (no fake data)!"
-                      : "🎮 MANUAL MODE ACTIVATED: Operator manual control enabled."
-                  }`,
-                  ...prev.slice(0, 15),
-                ]);
-              }}
-            >
-              <Zap size={18} className={isAutoMode ? "live-dot-pulse" : ""} />
-              <span>{isAutoMode ? "AUTO SYNC: ACTIVE (REAL NPL DATA)" : "ENABLE AUTO SYNC"}</span>
-            </button>
-
             <div style={{ display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <span
@@ -1242,7 +1292,7 @@ export default function BroadcastControllerPage() {
                   }}
                 />
                 <strong style={{ fontSize: "13px", color: isAutoMode ? "#86efac" : "#fef08a" }}>
-                  {isAutoMode ? "REAL NPL AUTO SYNC ACTIVE" : "MANUAL DIRECTOR MODE"}
+                  {isAutoMode ? "REAL NPL AUTO SYNC ACTIVE (CONTROLLED FROM NAVBAR)" : "MANUAL DIRECTOR MODE (SYNC OFF)"}
                 </strong>
               </div>
               <small style={{ fontSize: "11px", color: "#94a3b8" }}>
@@ -1287,7 +1337,7 @@ export default function BroadcastControllerPage() {
             <button
               type="button"
               className="button secondary compact"
-              onClick={syncAutoFeed}
+              onClick={() => syncAutoFeed({ manual: true })}
               disabled={liveSyncing}
               title="Sync latest live scores from /api/npl/live"
             >
@@ -1303,7 +1353,7 @@ export default function BroadcastControllerPage() {
                 type="button"
                 className={`button compact ${autoSpeed === 2500 ? "brand" : "ghost"}`}
                 style={{ height: "30px", fontSize: "11px", padding: "0 8px" }}
-                onClick={() => setAutoSpeed(2500)}
+                onClick={() => setAndPersistAutoSpeed(2500)}
               >
                 Fast (2.5s)
               </button>
@@ -1311,7 +1361,7 @@ export default function BroadcastControllerPage() {
                 type="button"
                 className={`button compact ${autoSpeed === 4500 ? "brand" : "ghost"}`}
                 style={{ height: "30px", fontSize: "11px", padding: "0 8px" }}
-                onClick={() => setAutoSpeed(4500)}
+                onClick={() => setAndPersistAutoSpeed(4500)}
               >
                 Normal (4.5s)
               </button>
@@ -1319,7 +1369,7 @@ export default function BroadcastControllerPage() {
                 type="button"
                 className={`button compact ${autoSpeed === 7000 ? "brand" : "ghost"}`}
                 style={{ height: "30px", fontSize: "11px", padding: "0 8px" }}
-                onClick={() => setAutoSpeed(7000)}
+                onClick={() => setAndPersistAutoSpeed(7000)}
               >
                 Slow (7s)
               </button>

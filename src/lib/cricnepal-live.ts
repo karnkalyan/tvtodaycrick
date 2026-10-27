@@ -483,6 +483,13 @@ export async function applyCricNepalMatchToDb(
         data: matchUpdateData,
       });
 
+      // An authoritative refresh must not retain player rows imported from a
+      // previously selected/source-mismatched match. Those rows otherwise leak
+      // into every batting, bowling, partnership, and master graphic.
+      if (options.forceOverwrite) {
+        await tx.playerMatchStat.deleteMany({ where: { matchId: match.id } });
+      }
+
       // 2. Reconcile Toss
       if (data.toss) {
         // Resolve toss winner team ID

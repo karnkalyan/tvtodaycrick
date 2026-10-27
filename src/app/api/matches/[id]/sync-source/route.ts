@@ -32,7 +32,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     // Determine Source URL (CricNepal or OnlineKhabar)
-    let sourceUrl = typeof body?.sourceUrl === "string" ? body.sourceUrl.trim() : "";
+    const explicitSourceUrl = typeof body?.sourceUrl === "string" ? body.sourceUrl.trim() : "";
+    let sourceUrl = explicitSourceUrl;
     if (!sourceUrl && match.notes) {
       const matchUrlLine = match.notes.match(/Source:\s*(https?:\/\/[^\s]+(?:cricnepal\.com|onlinekhabar\.com)\/[^\s]+)/i);
       if (matchUrlLine) {
@@ -44,6 +45,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const matchNum = match.matchNumber || "";
     const ordinal = Number(matchNum.match(/(\d+)$/)?.[1]);
     const okFallbackUrl = getOnlineKhabarUrlForMatch(matchNum) || "";
+    const isSeasonThreeFixture = /^Season3-M\d+$/i.test(matchNum);
+    // Season 3 has a stable OnlineKhabar sequence: Match 1 = 315,
+    // Match 2 = 316, Match 3 = 317, etc. Old CricNepal URLs in fixture notes
+    // must not silently override that current source mapping.
+    if (!explicitSourceUrl && isSeasonThreeFixture && okFallbackUrl) {
+      sourceUrl = okFallbackUrl;
+    }
     let cnFallbackUrl = "";
     if (
       (match.title.toLowerCase().includes("lumbini") && match.title.toLowerCase().includes("sudurpaschim")) ||
@@ -92,13 +100,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // Apply to database without touching asset images or deleting history
     const forceOverwrite = body?.forceOverwrite === true;
     const updatedMatch = await applyCricNepalMatchToDb(matchId, parsedData, { forceOverwrite });
+    const broadcastRecord = await (prisma as any).broadcastState.findUnique({
+      where: { id: "current" },
+    });
 
     return ok({
       success: true,
-      sourceUrl,
+      sourceUrl: usedUrl,
       match: updatedMatch,
       toss: updatedMatch?.toss,
       innings: updatedMatch?.innings,
+      broadcastState: broadcastRecord?.state || null,
       parsed: {
         status: parsedData.status,
         toss: parsedData.toss,

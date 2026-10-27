@@ -118,12 +118,22 @@ export function SeasonProvider({ children }: { children: React.ReactNode }) {
   }, [year]);
 
   const toggleAutoSync = useCallback((forceVal?: boolean) => {
-    setAutoSync((prev) => {
-      const next = forceVal !== undefined ? forceVal : !prev;
-      localStorage.setItem("npl-auto-sync", String(next));
-      return next;
-    });
-  }, []);
+    const next = forceVal !== undefined ? forceVal : !autoSync;
+    setAutoSync(next);
+    localStorage.setItem("npl-auto-sync", String(next));
+    // Keep the broadcast controller/output on the same single global switch.
+    // This is intentionally a partial write so it cannot replace live score
+    // or graphics data owned by another screen.
+    void fetch("/api/broadcast/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        state: { ui: { autoSync: next } },
+        action: "automation",
+        payload: { ui: { autoSync: next } },
+      }),
+    }).catch(() => {});
+  }, [autoSync]);
 
   const switchProvider = useCallback(
     async (newProvider: NplProvider) => {

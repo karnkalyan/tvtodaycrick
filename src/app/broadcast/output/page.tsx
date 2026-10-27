@@ -176,14 +176,14 @@ export default function BroadcastOutputPage() {
                 <span id="tossTeamName">JANAKPUR BOLTS</span>
               </div>
               <div className="editorial-copy">
-                <small>JANAKPUR BOLTS WON THE TOSS</small>
-                <h2>WE&apos;LL<br /><em>BAT FIRST</em></h2>
-                <p>Fresh surface at Kirtipur — put runs on the board.</p>
+                <small id="tossWinner">TOSS NOT YET RECORDED</small>
+                <h2 id="tossDecision">TOSS DECISION</h2>
+                <p id="tossDetail">Official toss information</p>
               </div>
               <div className="side-stat">
                 <span>CAPTAIN</span>
-                <b>ANIL SAH</b>
-                <small>DECISION · BAT</small>
+                <b id="tossWinnerSide">TEAM</b>
+                <small id="tossDecisionSmall">DECISION</small>
               </div>
             </div>
           </section>
@@ -211,7 +211,7 @@ export default function BroadcastOutputPage() {
               <div className="profile-placeholder" id="profilePhoto">
                 <span id="profileInitials">BS</span>
               </div>
-              <div className="profile-number">27</div>
+              <div className="profile-number" id="profileNumber">0</div>
             </div>
             <div className="profile-copy">
               <span className="eyebrow">BATTER PROFILE · KATHMANDU GURKHAS</span>
@@ -227,13 +227,13 @@ export default function BroadcastOutputPage() {
               <div className="profile-placeholder alt">
                 <span>LR</span>
               </div>
-              <div className="profile-number">27</div>
+              <div className="profile-number" id="bowlerProfileNumber">0</div>
             </div>
             <div className="profile-copy">
               <span className="eyebrow">BOWLER PROFILE · JANAKPUR BOLTS</span>
               <h2>LALIT RAJBANSHI</h2>
               <p>LEFT-ARM ORTHODOX</p>
-              <div className="profile-stats">
+              <div className="profile-stats" id="bowlerProfileStats">
                 <div><span>MATCHES</span><b>28</b></div>
                 <div><span>WICKETS</span><b>41</b></div>
                 <div><span>AVERAGE</span><b>18.7</b></div>
@@ -269,26 +269,26 @@ export default function BroadcastOutputPage() {
 
           {/* 10 PARTNERSHIP */}
           <section className="gfx lower-strip is-hidden" data-gfx="partnership" id="partnership">
-            <div className="strip-label"><span>PARTNERSHIP</span><b>5TH WICKET</b></div>
-            <div className="strip-player"><span>▶</span><b>BHIM SHARKI</b><strong>58 <small>41</small></strong></div>
-            <div className="partnership-value"><b>64</b><span>42 BALLS</span></div>
-            <div className="strip-player right"><strong>27 <small>21</small></strong><b>AADIL ALAM</b></div>
+            <div className="strip-label"><span>PARTNERSHIP</span><b id="partnershipLabel">CURRENT STAND</b></div>
+            <div className="strip-player"><span>▶</span><b id="partnershipStriker">BATTER</b><strong><span id="partnershipStrikerRuns">0</span> <small id="partnershipStrikerBalls">0</small></strong></div>
+            <div className="partnership-value"><b id="partnershipRuns">0</b><span id="partnershipBalls">0 BALLS</span></div>
+            <div className="strip-player right"><strong><span id="partnershipNonStrikerRuns">0</span> <small id="partnershipNonStrikerBalls">0</small></strong><b id="partnershipNonStriker">NON-STRIKER</b></div>
           </section>
 
           {/* 11 CHASE EQUATION */}
           <section className="gfx lower-strip chase-strip is-hidden" data-gfx="chase" id="chase">
             <div className="strip-label"><span>CHASE</span><b>KATHMANDU GURKHAS</b></div>
-            <div className="chase-big"><span>NEED</span><b>27</b><small>RUNS</small></div>
-            <div className="chase-big"><span>FROM</span><b>22</b><small>BALLS</small></div>
-            <div className="chase-small"><span>REQ. RATE</span><b>7.36</b></div>
-            <div className="chase-small"><span>WICKETS</span><b>6</b></div>
+            <div className="chase-big"><span>NEED</span><b id="chaseNeed">0</b><small>RUNS</small></div>
+            <div className="chase-big"><span>FROM</span><b id="chaseBalls">0</b><small>BALLS</small></div>
+            <div className="chase-small"><span>REQ. RATE</span><b id="chaseRate">-</b></div>
+            <div className="chase-small"><span>WICKETS</span><b id="chaseWickets">10</b></div>
           </section>
 
           {/* 12 OVER SUMMARY */}
           <section className="gfx lower-strip over-strip is-hidden" data-gfx="overSummary" id="overSummary">
-            <div className="strip-label"><span>OVER 17</span><b>9 RUNS</b></div>
-            <div className="over-balls"><i>1</i><i>1</i><i className="four">4</i><i>0</i><i>1</i><i className="six">6</i></div>
-            <div className="over-copy"><b>LALIT RAJBANSHI</b><span>1/31 · 4.0 OV</span></div>
+            <div className="strip-label"><span id="overSummaryLabel">CURRENT OVER</span><b id="overSummaryRuns">0 RUNS</b></div>
+            <div className="over-balls" id="overSummaryBalls"></div>
+            <div className="over-copy"><b id="overSummaryBowler">BOWLER</b><span id="overSummaryFigures">0/0 · 0.0 OV</span></div>
           </section>
 
           {/* 13 FALL OF WICKETS */}
@@ -320,7 +320,7 @@ export default function BroadcastOutputPage() {
             </header>
             <div className="summary-head"><span>BATTER</span><span>R</span><span>B</span><span>4s</span><span>6s</span><span>SR</span></div>
             <div className="summary-list" id="summaryRows"></div>
-            <div className="table-footer"><span>EXTRAS <b>11</b></span><span>RUN RATE <b>5.79</b></span><span>OVERS <b>32.4</b></span></div>
+            <div className="table-footer"><span>SCORE <b id="summaryFooterScore">0/0</b></span><span>RUN RATE <b id="summaryFooterRate">0.00</b></span><span>OVERS <b id="summaryFooterOvers">0.0</b></span></div>
           </section>
 
           {/* 15 POINTS TABLE */}
@@ -337,17 +337,17 @@ export default function BroadcastOutputPage() {
               <div className="result-team">
                 <div className="mega-monogram" id="resultACode">KAG</div>
                 <h2 id="resultAName">KATHMANDU GURKHAS</h2>
-                <b>174/5</b><span>19.1 OV</span>
+                <b id="resultAScore">0/0</b><span id="resultAOvers">0.0 OV</span>
               </div>
               <div className="result-middle">
-                <small>KATHMANDU GURKHAS WON</small>
-                <strong>BY 5<br />WICKETS</strong>
-                <p>PLAYER OF THE MATCH<br /><b>BHIM SHARKI</b></p>
+                <small id="resultStatus">MATCH RESULT</small>
+                <strong id="resultText">RESULT PENDING</strong>
+                <p>PLAYER OF THE MATCH<br /><b id="resultPotm">TBC</b></p>
               </div>
               <div className="result-team right">
                 <div className="mega-monogram alt" id="resultBCode">JAB</div>
                 <h2 id="resultBName">JANAKPUR BOLTS</h2>
-                <b>171/7</b><span>20.0 OV</span>
+                <b id="resultBScore">0/0</b><span id="resultBOvers">0.0 OV</span>
               </div>
             </div>
           </section>
@@ -359,9 +359,9 @@ export default function BroadcastOutputPage() {
               <h2 id="potmName">BHIM SHARKI</h2>
               <p>MATCH-WINNING HALF-CENTURY IN THE CHASE</p>
               <div>
-                <b>58*</b><small>RUNS</small>
-                <b>41</b><small>BALLS</small>
-                <b>141.5</b><small>STRIKE RATE</small>
+                <b id="potmRuns">-</b><small>RUNS</small>
+                <b id="potmBalls">-</b><small>BALLS</small>
+                <b id="potmStrikeRate">-</b><small>STRIKE RATE</small>
               </div>
             </div>
             <div className="award-photo">
@@ -405,16 +405,16 @@ export default function BroadcastOutputPage() {
             </header>
             <div className="bowling-head"><span>BOWLER</span><span>O</span><span>M</span><span>R</span><span>W</span><span>ECON</span></div>
             <div className="bowling-list" id="bowlingRows"></div>
-            <div className="table-footer"><span>OVERS <b>16.2</b></span><span>RUNS <b>146</b></span><span>WICKETS <b>4</b></span></div>
+            <div className="table-footer"><span>OVERS <b id="bowlingFooterOvers">0.0</b></span><span>RUNS <b id="bowlingFooterRuns">0</b></span><span>WICKETS <b id="bowlingFooterWickets">0</b></span></div>
           </section>
 
           {/* 21 PROJECTED SCORE */}
           <section className="gfx lower-strip projected-strip is-hidden" data-gfx="projected" id="projected">
             <div className="strip-label"><span>PROJECTED SCORE</span><b>KATHMANDU GURKHAS</b></div>
-            <div className="projection"><small>CURRENT RATE</small><b>179</b></div>
-            <div className="projection hot"><small>9.5 RPO</small><b>190</b></div>
-            <div className="projection"><small>10.5 RPO</small><b>200</b></div>
-            <div className="projection"><small>11.5 RPO</small><b>210</b></div>
+            <div className="projection"><small>CURRENT RATE</small><b id="projectedCurrent">0</b></div>
+            <div className="projection hot"><small>9.5 RPO</small><b id="projected95">190</b></div>
+            <div className="projection"><small>10.5 RPO</small><b id="projected105">210</b></div>
+            <div className="projection"><small>11.5 RPO</small><b id="projected115">230</b></div>
           </section>
 
           {/* 23 MASTER FULL SCREEN CRICKET INFORMATICS DASHBOARD — 16:9 5-ZONE HERO */}

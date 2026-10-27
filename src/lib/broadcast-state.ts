@@ -60,10 +60,10 @@ export const DEFAULT_BROADCAST_STATE: BroadcastState = {
   },
   fow: [],
   summary: [
-    ["ROHIT PAUDEL", "0*", "0", "0", "0", "0.0"],
-    ["AAKASH TRIPATHI", "0*", "0", "0", "0", "0.0"],
+    ["BATTER", "0*", "0", "0", "0", "0.0"],
+    ["NON-STRIKER", "0*", "0", "0", "0", "0.0"],
   ],
-  bowling: [["ABINASH BOHARA", "0.0", "0", "0", "0", "0.00"]],
+  bowling: [["BOWLER", "0.0", "0", "0", "0", "0.00"]],
   ui: {
     graphic: null,
     scoreMode: "hidden",
@@ -304,6 +304,40 @@ export function buildBroadcastStateFromMatch(
     if (wdInRecent > bowlerWides) bowlerWides = wdInRecent;
   }
 
+  const strikerStat = summary.find((row) => row[0].toUpperCase() === strikerName.toUpperCase());
+  const profile = strikerStat
+    ? [
+        ["RUNS", strikerStat[1].replace("*", "")],
+        ["BALLS", strikerStat[2]],
+        ["FOURS", strikerStat[3]],
+        ["SIXES", strikerStat[4]],
+        ["STRIKE RATE", strikerStat[5]],
+      ]
+    : [["RUNS", strikerRuns], ["BALLS", strikerBalls]];
+  const compare = [
+    ["RUNS", strikerRuns, String(parsedLive?.liveSummary?.currentBowler?.runs ?? 0)],
+    ["BALLS / OVERS", strikerBalls, bowlerOvers],
+    ["STRIKE RATE / ECON", strikerStat?.[5] || "0.0", parsedLive?.liveSummary?.currentBowler?.economy?.toFixed?.(2) || "0.00"],
+    ["4s / WICKETS", strikerStat?.[3] || "0", String(parsedLive?.liveSummary?.currentBowler?.wickets ?? 0)],
+    ["6s / MAIDENS", strikerStat?.[4] || "0", String(parsedLive?.liveSummary?.currentBowler?.maidens ?? 0)],
+  ];
+
+  const inningsScores = [inn1, inn2].filter(Boolean).map((inning: any) => ({
+    inningsNumber: inning.inningsNumber,
+    teamCode: inning.teamId === match.homeTeamId
+      ? getFranchiseBrand(match.homeTeam.name).code
+      : getFranchiseBrand(match.awayTeam.name).code,
+    teamName: inning.teamId === match.homeTeamId ? match.homeTeam.name : match.awayTeam.name,
+    runs: Number(inning.runs) || 0,
+    wickets: Number(inning.wickets) || 0,
+    overs: `${Math.floor((Number(inning.balls) || 0) / 6)}.${(Number(inning.balls) || 0) % 6}`,
+  }));
+  const activeOverRows = parsedLive?.oversByInnings?.[activeInningsNumber] || [];
+  const scoreAtOver = (overNumber: number) => {
+    const row = activeOverRows.find((item: any) => Number(String(item.overNo || "").match(/\d+/)?.[0]) === overNumber);
+    return row?.score || null;
+  };
+
   return {
     match: {
       matchId: match.id,
@@ -312,6 +346,11 @@ export function buildBroadcastStateFromMatch(
       teamAName: battingTeam.name,
       teamBName: bowlingTeam.name,
       inningsNumber: activeInningsNumber,
+      inningsScores,
+      resultText: match.resultText || parsedLive?.resultSummary || null,
+      playerOfMatch: match.playerOfMatch || null,
+      teamARoster: (battingTeam.players || []).map((player: any) => player.displayName),
+      teamBRoster: (bowlingTeam.players || []).map((player: any) => player.displayName),
     },
     score: {
       runs,
@@ -339,8 +378,13 @@ export function buildBroadcastStateFromMatch(
       venue: match.venue || "TU INTERNATIONAL CRICKET GROUND, KIRTIPUR",
       tossText,
       target: target ? String(target) : "-",
+      phasePowerplay: scoreAtOver(6),
+      phaseMiddle: scoreAtOver(15),
+      phaseDeath: bOvers > 90 ? `${runs}/${wickets} (${ovStr} OV)` : null,
     },
     fow,
+    profile,
+    compare,
     summary: summary.length ? summary : (DEFAULT_BROADCAST_STATE.summary as any),
     bowling: bowling.length ? bowling : (DEFAULT_BROADCAST_STATE.bowling as any),
     ui: {

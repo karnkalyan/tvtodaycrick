@@ -32,6 +32,7 @@ import {
   humanRole,
 } from "@/components/common";
 import { api, jsonBody } from "@/lib/client-api";
+import { useSeason } from "@/components/season-context";
 import {
   applyCustomExtra,
   applyQuickBall,
@@ -133,6 +134,8 @@ const toInn = (match: Match, n: number): InnForm => {
 };
 
 export default function ScoreEntryPage() {
+  const season = useSeason();
+  const cricNepalAutoSync = season.autoSync;
   const [mounted, setMounted] = useState(false);
   const [matches, setMatches] = useState<Match[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -171,7 +174,6 @@ export default function ScoreEntryPage() {
   const [directAdjustRuns, setDirectAdjustRuns] = useState<string>("1");
 
   // CricNepal Auto-Sync state & continuity
-  const [cricNepalAutoSync, setCricNepalAutoSync] = useState(false);
   const [isCricNepalSyncing, setIsCricNepalSyncing] = useState(false);
   const [cricNepalLastSync, setCricNepalLastSync] = useState<string | null>(null);
   const [cricNepalSyncMsg, setCricNepalSyncMsg] = useState<string | null>(null);
@@ -386,16 +388,6 @@ export default function ScoreEntryPage() {
     },
     [selectedId, loadDetail]
   );
-
-  const toggleCricNepalAutoSync = useCallback(() => {
-    setCricNepalAutoSync((prev) => {
-      const next = !prev;
-      if (next && selectedId) {
-        void handleCricNepalSync(false);
-      }
-      return next;
-    });
-  }, [selectedId, handleCricNepalSync]);
 
   // Auto-Sync polling loop every 20 seconds while enabled
   useEffect(() => {
@@ -1422,31 +1414,6 @@ export default function ScoreEntryPage() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     <StatusPill status={match.status} />
-
-                    {/* CricNepal Auto-Sync & Manual Toggle */}
-                    <button
-                      type="button"
-                      className={`button compact ${cricNepalAutoSync ? "brand" : "secondary"}`}
-                      onClick={toggleCricNepalAutoSync}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        background: cricNepalAutoSync ? "rgba(34, 197, 94, 0.15)" : undefined,
-                        borderColor: cricNepalAutoSync ? "rgba(34, 197, 94, 0.4)" : undefined,
-                        color: cricNepalAutoSync ? "#15803d" : undefined,
-                        fontWeight: 700,
-                      }}
-                      title={`CricNepal Live Auto-Sync is ${cricNepalAutoSync ? "ACTIVE (Polling every 20s; manual input preserved)" : "OFF (Manual scoring mode)"}. Click to toggle.`}
-                    >
-                      {cricNepalAutoSync ? (
-                        <span className="pulse-dot" style={{ background: "#22c55e", width: 7, height: 7, borderRadius: "50%" }} />
-                      ) : (
-                        <Radio size={13} style={{ opacity: 0.6 }} />
-                      )}
-                      <span>{cricNepalAutoSync ? "Auto-Sync ON" : "Auto-Sync OFF"}</span>
-                      {isCricNepalSyncing && <RefreshCw size={11} className="spin" />}
-                    </button>
 
                     {/* Manual Sync from CricNepal Button */}
                     <button

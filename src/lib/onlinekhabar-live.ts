@@ -14,6 +14,7 @@ const urlFailureBackoffs = new Map<string, FailureBackoff>();
 const liveMatchCache = new Map<string, { at: number; data: CricNepalParsedLiveMatch }>();
 const BACKOFF_COOLDOWN_MS = 30000;
 const CACHE_TTL_MS = 3000;
+const SOURCE_TIMEOUT_MS = 45000;
 
 export const OK_BASE_MATCH_ID = 314; // Match 1 = 315, Match 2 = 316, etc.
 
@@ -40,6 +41,14 @@ export function slugToPlayerOrTeamName(slug: string): string {
       return w.charAt(0).toUpperCase() + w.slice(1);
     })
     .join(" ");
+}
+
+function sourcePlayerName(rawName: string, link: string, imageUrl = ""): string {
+  const slug = link.match(/\/cricket-player\/([^/]+)/)?.[1] || "";
+  if (slug && !/^\d+$/.test(slug)) return slugToPlayerOrTeamName(slug);
+  const imageFile = imageUrl.split("/").pop()?.split("?")[0]?.replace(/\.[^.]+$/, "") || "";
+  if (imageFile && !/^\d+$/.test(imageFile)) return slugToPlayerOrTeamName(imageFile);
+  return rawName;
 }
 
 function parseScoreStr(str: string): { runs: number; wickets: number; overs: string; balls: number } {
@@ -84,6 +93,22 @@ function parseExtrasStr(text: string) {
   if (pMatch) penalties = parseInt(pMatch[1], 10) || 0;
 
   return { total, wides, noBalls, byes, legByes, penalties };
+}
+
+/** Preserve every delivery and normalize compact extra notation for graphics. */
+function parseBallToken(text: string, title = "", className = ""): string {
+  const raw = text.trim();
+  if (!raw && (/dot/i.test(className) || /Dot|नो रन/i.test(title))) return "0";
+  if (!raw && (/wicket/i.test(className) || /Wicket|आउट/i.test(title))) return "W";
+  if (!raw) return ".";
+
+  const lower = raw.toLowerCase();
+  if (lower === "w") return "W";
+  if (/^\d*w$/.test(lower)) return `${lower.slice(0, -1) || "1"}WD`;
+  if (/^\d*nb$/.test(lower)) return `${lower.slice(0, -2) || "1"}NB`;
+  if (/^\d*lb$/.test(lower)) return `${lower.slice(0, -2) || "1"}LB`;
+  if (/^\d*b$/.test(lower)) return `${lower.slice(0, -1) || "1"}B`;
+  return raw === "." ? "0" : raw.toUpperCase();
 }
 
 /**
@@ -166,9 +191,8 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
     const rows: Array<[string, string, string]> = [];
     $fow("table.npl-sc-table--fow tbody tr").each((_, tr) => {
       const playerLink = $fow(tr).find(".npl-player-link").attr("href") || "";
-      const playerSlug = playerLink.split("/").filter(Boolean).pop() || "";
       const rawName = $fow(tr).find(".npl-sc-player__name").text().trim();
-      const playerName = isNaN(Number(playerSlug)) && playerSlug ? slugToPlayerOrTeamName(playerSlug) : rawName;
+      const playerName = sourcePlayerName(rawName, playerLink, $fow(tr).find("img").attr("src") || "");
       const score = $fow(tr).find("td:nth-child(2)").text().trim();
       const over = $fow(tr).find("td:nth-child(3)").text().trim();
       if (score && over) {
@@ -196,10 +220,7 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
       $ov(tr).find(".npl-overs__balls li").each((_, li) => {
         const text = $ov(li).text().trim();
         const title = $ov(li).attr("title") || "";
-        if (text) balls.push(text);
-        else if ($ov(li).hasClass("npl-chip--dot") || title.includes("नो रन") || title.includes("Dot")) balls.push("0");
-        else if (title.includes("आउट") || title.includes("Wicket")) balls.push("W");
-        else balls.push(".");
+        balls.push(parseBallToken(text, title, $ov(li).attr("class") || ""));
       });
       if (balls.length > 0) {
         oversList.push({ overNo, score, balls });
@@ -226,14 +247,18 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
     const $bowl = load(bowlHtml);
     const extras = parseExtrasStr($bat.root().text());
 
-    let battingTeamName =
-      innNum === 1
-        ? teams[1]?.scoreText
-          ? awayTeam.name
-          : homeTeam.name
-        : teams[1]?.scoreText
-        ? homeTeam.name
-        : awayTeam.name;
+    const totalMatch = $bat.root().text().match(/Total:\s*(\d+)\/(\d+)/i);
+    const totalRuns = totalMatch ? Number(totalMatch[1]) : null;
+    const totalWickets = totalMatch ? Number(totalMatch[2]) : null;
+    const scoreMatchedTeam = teams.find((team) =>
+      totalRuns !== null && team.runs === totalRuns && team.wickets === totalWickets
+    );
+    const currentInnings = Number(data.current)
+      || (/2nd Innings/i.test($score(".npl-score__innings").text()) ? 2 : 1);
+    const positionalTeam = innNum === currentInnings ? teams[0] : teams[1];
+    const battingTeamName = scoreMatchedTeam?.name
+      || positionalTeam?.name
+      || (innNum === 1 ? homeTeam.name : awayTeam.name);
     let bowlingTeamName = battingTeamName === homeTeam.name ? awayTeam.name : homeTeam.name;
 
     const innTeam = teams.find((t) => t.name === battingTeamName);
@@ -259,8 +284,7 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
       if (tds.length < 5) return;
       const rawPName = $bat(tds[0]).find(".npl-sc-player__name").text().trim();
       const pLink = $bat(tds[0]).find(".npl-player-link").attr("href") || "";
-      const pSlug = pLink.match(/\/cricket-player\/([^\/]+)/)?.[1] || "";
-      const playerName = isNaN(Number(pSlug)) && pSlug ? slugToPlayerOrTeamName(pSlug) : rawPName;
+      const playerName = sourcePlayerName(rawPName, pLink, $bat(tds[0]).find("img").attr("src") || "");
       const how = $bat(tds[1]).text().trim();
       const isNotOut = /not out/i.test(how);
       const runs = parseInt($bat(tds[2]).text().trim(), 10) || 0;
@@ -292,8 +316,7 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
       if (tds.length < 5) return;
       const rawPName = $bowl(tds[0]).find(".npl-sc-player__name").text().trim();
       const pLink = $bowl(tds[0]).find(".npl-player-link").attr("href") || "";
-      const pSlug = pLink.match(/\/cricket-player\/([^\/]+)/)?.[1] || "";
-      const playerName = isNaN(Number(pSlug)) && pSlug ? slugToPlayerOrTeamName(pSlug) : rawPName;
+      const playerName = sourcePlayerName(rawPName, pLink, $bowl(tds[0]).find("img").attr("src") || "");
       const overs = $bowl(tds[1]).text().trim();
       const maidens = parseInt($bowl(tds[2]).text().trim(), 10) || 0;
       const runs = parseInt($bowl(tds[3]).text().trim(), 10) || 0;
@@ -318,37 +341,76 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
 
   // Live Summary
   const crrText = $score(".npl-score__rates").text().trim();
-  const crr = parseFloat(crrText.replace(/[^0-9.]/g, "")) || 0;
+  const crr = parseFloat(crrText.match(/CRR:\s*([\d.]+)/i)?.[1] || "0") || 0;
 
   const activeInnNum = innings.find((i) => i.status === "LIVE")?.inningsNumber || (innings.length > 1 && status === "COMPLETED" ? 2 : (innings[0]?.inningsNumber || 1));
   if (oversByInnings[activeInnNum]?.[0]?.balls?.length) {
     recentDeliveries = oversByInnings[activeInnNum][0].balls;
   }
 
-  const currentBatters = playerPerformances
-    .filter((p) => p.innings === activeInnNum && p.type === "BATSMAN" && p.batting.isNotOut)
-    .map((p, idx) => ({
-      name: p.name,
-      runs: p.batting.runs,
-      balls: p.batting.balls,
-      fours: p.batting.fours,
-      sixes: p.batting.sixes,
-      strikeRate: p.batting.strikeRate,
-      isStriker: idx === 0,
-    }));
+  const scoreHeaderBatters: Array<{ name: string; runs: number; balls: number; isStriker: boolean }> = [];
+  $score(".npl-score__live .npl-score__group:not(.npl-score__group--over) .npl-score__player").each((_, el) => {
+    const link = $score(el).find(".npl-player-link").attr("href") || "";
+    const slug = link.match(/\/cricket-player\/([^/]+)/)?.[1] || "";
+    const rawName = $score(el).find(".npl-player-link").text().trim();
+    const figures = $score(el).text().match(/(\d+)\s*\(\s*(\d+)b\s*\)/i);
+    if (!figures) return;
+    const runs = Number(figures[1]);
+    const balls = Number(figures[2]);
+    const matchingPerformance = playerPerformances.find((p) =>
+      p.innings === activeInnNum && p.type === "BATSMAN"
+      && p.batting?.runs === runs && p.batting?.balls === balls
+    );
+    scoreHeaderBatters.push({
+      name: (!/^\d+$/.test(slug) && slug ? slugToPlayerOrTeamName(slug) : matchingPerformance?.name) || rawName,
+      runs,
+      balls,
+      isStriker: $score(el).find(".npl-icon-bat").length > 0,
+    });
+  });
+
+  const currentBatters = scoreHeaderBatters.length
+    ? scoreHeaderBatters
+        .sort((a, b) => Number(b.isStriker) - Number(a.isStriker))
+        .map((batter) => {
+          const performance = playerPerformances.find((p) =>
+            p.innings === activeInnNum && p.type === "BATSMAN" && p.name === batter.name
+          );
+          return {
+            ...batter,
+            fours: performance?.batting?.fours || 0,
+            sixes: performance?.batting?.sixes || 0,
+            strikeRate: performance?.batting?.strikeRate
+              || (batter.balls ? (batter.runs * 100) / batter.balls : 0),
+          };
+        })
+    : playerPerformances
+        .filter((p) => p.innings === activeInnNum && p.type === "BATSMAN" && p.batting?.isNotOut)
+        .map((p, idx) => ({
+          name: p.name,
+          runs: p.batting!.runs,
+          balls: p.batting!.balls,
+          fours: p.batting!.fours,
+          sixes: p.batting!.sixes,
+          strikeRate: p.batting!.strikeRate,
+          isStriker: idx === 0,
+        }));
 
   let currentBowler: NonNullable<CricNepalParsedLiveMatch["liveSummary"]>["currentBowler"] = null;
   const bowlerEl = $score(".npl-score__player--bowler");
   if (bowlerEl.length) {
     const rawName = bowlerEl.find(".npl-player-link").text().trim();
     const link = bowlerEl.find(".npl-player-link").attr("href") || "";
-    const slug = link.match(/\/cricket-player\/([^\/]+)/)?.[1] || "";
-    const name = isNaN(Number(slug)) && slug ? slugToPlayerOrTeamName(slug) : rawName;
     const text = bowlerEl.text().replace(rawName, "").trim();
     const m = text.match(/(\d+)\/(\d+)\s*\(([\d.]+)\)/);
     if (m) {
+      const matchingPerformance = playerPerformances.find((p) =>
+        p.innings === activeInnNum && p.type === "BOWLER"
+        && p.bowling?.wickets === Number(m[1]) && p.bowling?.runs === Number(m[2])
+        && p.bowling?.overs === m[3]
+      );
       currentBowler = {
-        name,
+        name: matchingPerformance?.name || sourcePlayerName(rawName, link),
         wickets: parseInt(m[1], 10) || 0,
         runs: parseInt(m[2], 10) || 0,
         overs: m[3],
@@ -420,7 +482,7 @@ export async function fetchOnlineKhabarLiveMatch(urlOrId: string | number): Prom
     if (!jsonEndpoint) {
       const pageRes = await fetch(targetUrl, {
         cache: "no-store",
-        signal: AbortSignal.timeout(15000),
+        signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
         headers: {
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -443,7 +505,7 @@ export async function fetchOnlineKhabarLiveMatch(urlOrId: string | number): Prom
 
     const res = await fetch(jsonEndpoint, {
       cache: "no-store",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",

@@ -66,7 +66,7 @@ test("broadcast director preserves incoming swapped teams instead of stale local
   const loader = page.slice(page.indexOf("// Fetch NPL Database"), page.indexOf("// Helper to retrieve roster"));
 
   assert.match(sender, /persistedMatch = \{ teamA, teamB, \.\.\.\(incoming\.match \|\| \{\}\) \}/);
-  assert.match(sender, /incoming\.fow !== undefined/);
+  assert.match(sender, /\.\.\.incoming,/);
   assert.doesNotMatch(loader, /handleSelectFixture\(/);
 });
 
@@ -248,4 +248,27 @@ test("graphics templates and app.js include bowler no-balls and wides bindings",
   assert.match(appJs, /anchorMasterBowlerWides:\s*bWides/);
 });
 
+test("selected fixture auto-sync refreshes its authoritative source and persists automation settings", () => {
+  const controller = readFileSync(new URL("../src/app/(dashboard)/broadcast/page.tsx", import.meta.url), "utf8");
 
+  assert.match(controller, /`\/api\/matches\/\$\{selectedMatchId\}\/sync-source`/);
+  assert.match(controller, /forceOverwrite:\s*true/);
+  assert.match(controller, /broadcastState/);
+  assert.match(controller, /const isAutoMode = season\.autoSync/);
+  assert.match(controller, /if \(selectedMatchId && isAutoMode\) void syncAutoFeed\(\)/);
+  assert.match(controller, /if \(!isAutoMode && !manual\) return/);
+  assert.doesNotMatch(controller, /ENABLE AUTO SYNC/);
+});
+
+test("every data-backed graphic receives canonical arrays and full current-over deliveries", () => {
+  const script = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
+  const page = readFileSync(new URL("../src/app/broadcast/output/page.tsx", import.meta.url), "utf8");
+
+  assert.match(script, /Object\.assign\(state\.match, p\.match\)/);
+  assert.match(script, /state\.profile = p\.profile/);
+  assert.match(script, /state\.compare = p\.compare/);
+  assert.match(script, /overSummaryBalls\.innerHTML = html/);
+  assert.match(page, /id="overSummaryBalls"/);
+  assert.match(page, /id="partnershipStriker"/);
+  assert.match(page, /id="resultAScore"/);
+});

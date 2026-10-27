@@ -398,7 +398,11 @@
     setCrest('matchupACode', a, state.match.teamA, 'matchup-crest-img');
     setCrest('matchupBCode', b, state.match.teamB, 'matchup-crest-img');
     setCrest('xiTeamCode', a, state.match.teamA, 'xi-crest-img');
-    setCrest('tossCode', b, state.match.teamB, 'toss-crest-img');
+    const tossText = String(state.live.tossText || '');
+    const tossWinnerIsA = tossText.toUpperCase().includes(a.name.toUpperCase());
+    const tossTeam = tossWinnerIsA ? a : b;
+    const tossCode = tossWinnerIsA ? state.match.teamA : state.match.teamB;
+    setCrest('tossCode', tossTeam, tossCode, 'toss-crest-img');
     setCrest('resultACode', a, state.match.teamA, 'result-crest-img');
     setCrest('resultBCode', b, state.match.teamB, 'result-crest-img');
     setCrest('masterTeamAMonogram', a, state.match.teamA, 'team-crest-img');
@@ -468,14 +472,20 @@
     const anchorBgA = $('#anchorMasterBgCrestA'); if (anchorBgA) anchorBgA.style.backgroundImage = `url('${urlA}')`;
     const anchorBgB = $('#anchorMasterBgCrestB'); if (anchorBgB) anchorBgB.style.backgroundImage = `url('${urlB}')`;
 
-    const tossTeam=$('#tossTeamName'); if(tossTeam)tossTeam.textContent=b.name;
-    setText('ltEyebrow',`CAPTAIN · ${a.name}`); setText('ltName',a.captain); setText('ltRole','TEAM CAPTAIN · NPL 2026');
-    setText('profileName',a.hero); setText('profileRole',a.heroRole);
-    const profileInitials=$('#profileInitials'); if(profileInitials) profileInitials.textContent=a.hero.split(/\s+/).map(x=>x[0]).slice(0,2).join('');
-    const bp=$('#bowlerProfile'); if(bp){const h=bp.querySelector('h2');if(h)h.textContent=b.bowler;const sp=bp.querySelector('.profile-placeholder span');if(sp)sp.textContent=b.bowler.split(/\s+/).map(x=>x[0]).slice(0,2).join('');}
-    const cmp=$('#comparison'); if(cmp){const ps=cmp.querySelectorAll('.compare-person h2');if(ps[0])ps[0].textContent=state.live.strikerName;if(ps[1])ps[1].textContent=b.bowler;}
-    const tossSmall=$('#toss .editorial-copy small'); if(tossSmall)tossSmall.textContent=`${b.name} WON THE TOSS`;
-    const pom=$('#playerOfMatch .award-copy h2'); if(pom)pom.innerHTML=a.hero.replace(' ','<br>');
+    setText('tossTeamName', tossTeam.name);
+    setText('tossWinner', tossText || 'TOSS NOT YET RECORDED');
+    setText('tossWinnerSide', tossTeam.name);
+    const tossDecision = /ELECTED TO BAT|CHOSE BAT|OPTED TO BAT/i.test(tossText) ? 'BAT' : /ELECTED TO BOWL|CHOSE BOWL|BOWLING/i.test(tossText) ? 'BOWL' : 'PENDING';
+    setText('tossDecision', tossDecision === 'PENDING' ? 'TOSS PENDING' : `WE’LL ${tossDecision} FIRST`);
+    setText('tossDecisionSmall', `DECISION · ${tossDecision}`);
+    setText('tossDetail', tossText || 'Official toss information will appear here.');
+    setText('ltEyebrow',`LIVE BATTER · ${a.name}`); setText('ltName',state.live.strikerName); setText('ltRole',`${state.live.strikerRuns} RUNS · ${state.live.strikerBalls} BALLS`);
+    setText('profileName',state.live.strikerName); setText('profileRole',`CURRENT BATTER · ${state.live.strikerRuns} (${state.live.strikerBalls})`);
+    const profileInitials=$('#profileInitials'); if(profileInitials) profileInitials.textContent=String(state.live.strikerName || 'B').split(/\s+/).map(x=>x[0]).slice(0,2).join('');
+    const bp=$('#bowlerProfile'); if(bp){const h=bp.querySelector('h2');if(h)h.textContent=state.live.bowlerName;const p=bp.querySelector('.profile-copy p');if(p)p.textContent=`${state.live.bowlerFigures} · ${state.live.bowlerOvers} OV`;const sp=bp.querySelector('.profile-placeholder span');if(sp)sp.textContent=String(state.live.bowlerName || 'B').split(/\s+/).map(x=>x[0]).slice(0,2).join('');}
+    const cmp=$('#comparison'); if(cmp){const ps=cmp.querySelectorAll('.compare-person h2');if(ps[0])ps[0].textContent=state.live.strikerName;if(ps[1])ps[1].textContent=state.live.bowlerName;const figures=cmp.querySelectorAll('.compare-person > b');if(figures[0])figures[0].innerHTML=`${state.live.strikerRuns} <span>${state.live.strikerBalls}</span>`;if(figures[1])figures[1].innerHTML=`${state.live.bowlerFigures} <span>${state.live.bowlerOvers}</span>`;}
+    const potm = state.match.playerOfMatch || state.live.strikerName || 'TBC';
+    setText('potmName', potm); setText('resultPotm', state.match.playerOfMatch || 'TBC');
     const labels={
       '#playingXI .xi-lead small':'NPL SEASON 3 · 2026',
       '#batterProfile .eyebrow':`BATTER PROFILE · ${a.name}`,
@@ -530,8 +540,9 @@
   function renderLists(){
     const a=team(state.match.teamA);
     const xiList = $('#xiList');
-    if (xiList && Array.isArray(a.roster)) {
-      xiList.innerHTML=a.roster.slice(0,11).map((n,i)=>`<div class="xi-row"><span>${String(i+1).padStart(2,'0')}</span><b>${n}</b><small>${roleFor(i)}</small></div>`).join('');
+    const activeRoster = Array.isArray(state.match.teamARoster) && state.match.teamARoster.length ? state.match.teamARoster : a.roster;
+    if (xiList && Array.isArray(activeRoster)) {
+      xiList.innerHTML=activeRoster.slice(0,11).map((n,i)=>`<div class="xi-row"><span>${String(i+1).padStart(2,'0')}</span><b>${n}</b><small>${roleFor(i)}</small></div>`).join('');
     }
     const xiTeamName = $('#xiTeamName'); if(xiTeamName) xiTeamName.textContent = a.name;
     const xiTeamNameBig = $('#xiTeamNameBig'); if(xiTeamNameBig) xiTeamNameBig.textContent = a.name;
@@ -547,6 +558,12 @@
     const fr = $('#fowRows'); if(fr) fr.innerHTML=activeFow.map(r=>`<div class="fow-row"><strong>${r[0]}</strong><b>${r[1]}</b><span>${r[2]}</span></div>`).join('');
     const sr = $('#summaryRows'); if(sr) sr.innerHTML=state.summary.map(r=>`<div class="summary-row"><b>${r[0]}</b><strong>${r[1]}</strong><span>${r[2]}</span><span>${r[3]}</span><span>${r[4]}</span><span>${r[5]}</span></div>`).join('');
     const br = $('#bowlingRows'); if(br) br.innerHTML=state.bowling.map(r=>`<div class="bowling-row"><b>${r[0]}</b><span>${r[1]}</span><span>${r[2]}</span><span>${r[3]}</span><strong>${r[4]}</strong><span>${r[5]}</span></div>`).join('');
+    const currentBowlerRow = state.bowling.find(row => String(row[0]).toUpperCase() === String(state.live.bowlerName).toUpperCase());
+    const bowlerProfileStats = $('#bowlerProfileStats');
+    if (bowlerProfileStats) {
+      const row = currentBowlerRow || [state.live.bowlerName, state.live.bowlerOvers, '0', String(state.live.bowlerFigures || '0/0').split('/')[1] || '0', String(state.live.bowlerFigures || '0/0').split('/')[0] || '0', '0.00'];
+      bowlerProfileStats.innerHTML = [['OVERS',row[1]],['MAIDENS',row[2]],['RUNS',row[3]],['WICKETS',row[4]],['ECONOMY',row[5]]].map(item=>`<div><span>${item[0]}</span><b>${item[1]}</b></div>`).join('');
+    }
     
     // Points table for full cards and Master Zone 5 (strictly deduplicated)
     const ptsTableHtml = state.points.map(r=>{
@@ -615,17 +632,18 @@
     // Preserve ALL ball events in the over (no hard 6-ball cutoff)
     const rawBalls = isScheduled ? ['-', '-', '-', '-', '-', '-'] : (state.score.recent || []);
     let balls = [...rawBalls];
+    const isIllegalDelivery = value => /(?:WD|NB)$/i.test(String(value)) || /^\d+W$/i.test(String(value));
 
     // If over is in progress, calculate legal balls bowled and pad remaining legal deliveries with '-'
     let legalBallsInOver = 0;
     if (!isScheduled && !isCompleted) {
-      legalBallsInOver = balls.filter(b => b !== '-' && !/WD|NB/i.test(b)).length;
+      legalBallsInOver = balls.filter(b => b !== '-' && !isIllegalDelivery(b)).length;
       const remainingLegal = Math.max(0, 6 - legalBallsInOver);
       for (let i = 0; i < remainingLegal; i++) {
         balls.push('-');
       }
     } else {
-      legalBallsInOver = balls.filter(b => b !== '-' && !/WD|NB/i.test(b)).length;
+      legalBallsInOver = balls.filter(b => b !== '-' && !isIllegalDelivery(b)).length;
     }
 
     const getBallClass = (v) => {
@@ -634,7 +652,7 @@
       if (v === '6') return 'six';
       if (v === 'W' || (v.toUpperCase().includes('W') && !v.toUpperCase().includes('WD'))) return 'wicket';
       if (/NB/i.test(v)) return 'noball extra';
-      if (/WD/i.test(v)) return 'wide extra';
+      if (/WD/i.test(v) || /^\d+W$/i.test(v)) return 'wide extra';
       if (/LB|B|EX/i.test(v)) return 'extra';
       return '';
     };
@@ -643,6 +661,15 @@
     const el1 = $('#recentBalls'); if(el1) el1.innerHTML = html;
     const el2 = $('#masterRecentBalls'); if(el2) el2.innerHTML = html;
     const el3 = $('#anchorMasterRecentBalls'); if(el3) el3.innerHTML = html;
+    const overSummaryBalls = $('#overSummaryBalls'); if(overSummaryBalls) overSummaryBalls.innerHTML = html;
+    const overRuns = rawBalls.reduce((total, token) => {
+      const value = String(token).toUpperCase();
+      return total + (value === 'W' || value === '-' ? 0 : (parseInt(value, 10) || 0));
+    }, 0);
+    setText('overSummaryLabel', isScheduled ? 'OVER 1 PENDING' : `OVER ${Math.floor(parseFloat(state.score.overs) || 0) + 1}`);
+    setText('overSummaryRuns', `${overRuns} RUN${overRuns === 1 ? '' : 'S'}`);
+    setText('overSummaryBowler', state.live.bowlerName || 'BOWLER');
+    setText('overSummaryFigures', `${state.live.bowlerFigures || '0/0'} · ${state.live.bowlerOvers || '0.0'} OV`);
     const ovRem = $('#masterOverStatus');
     if (ovRem) {
       if (isScheduled) {
@@ -748,30 +775,26 @@
     const partRate = partBalls > 0 ? ((partRuns / partBalls) * 6).toFixed(2) : '-';
     const splitAPct = partRuns > 0 ? Math.round((sRuns / partRuns) * 100) : 50;
     const splitBPct = 100 - splitAPct;
+    const chaseNeed = Number(targetVal) > 0 ? Math.max(0, Number(targetVal) - Number(s.runs || 0)) : 0;
+    const chaseBalls = Math.max(0, 120 - totalBalls);
+    const projectAt = rate => Math.round(Number(s.runs || 0) + rate * (chaseBalls / 6));
 
     const wktCount = Number(s.wickets) || 0;
     const currentWkt = Math.min(10, wktCount + 1);
     const wktSuffix = currentWkt === 1 ? 'ST' : currentWkt === 2 ? 'ND' : currentWkt === 3 ? 'RD' : 'TH';
     const partnershipLabel = isScheduled ? 'OPENING STAND · 0 (0b)' : `${currentWkt}${wktSuffix} WICKET PARTNERSHIP`;
 
-    // Dynamic phase calculation matching actual game score
+    // Phase cards use source-provided cumulative scores only; do not invent
+    // proportional splits when the source has not supplied that over yet.
     const curOv = parseFloat(s.overs) || 0;
     if (isScheduled) {
       setText('phasePP', 'YET TO BAT');
       setText('phaseMid', 'YET TO BAT');
       setText('phaseDeath', 'YET TO BAT');
     } else {
-      const ppRuns = Math.min(s.runs, Math.round(s.runs * (curOv <= 6 ? 1 : curOv <= 15 ? 0.42 : 0.40)));
-      const ppWkts = Math.min(s.wickets, curOv <= 6 ? s.wickets : 1);
-      const midRuns = curOv <= 6 ? 0 : Math.min(s.runs - ppRuns, Math.round(s.runs * 0.54));
-      const midWkts = curOv <= 6 ? 0 : Math.min(Math.max(0, s.wickets - ppWkts), 3);
-      const deathRuns = Math.max(0, s.runs - ppRuns - midRuns);
-      const deathWkts = Math.max(0, s.wickets - ppWkts - midWkts);
-      const deathOv = Math.max(0, (curOv - 15)).toFixed(1);
-
-      setText('phasePP', curOv <= 6 ? `${s.runs}/${s.wickets} (${s.overs} OV)` : `${ppRuns}/${ppWkts}`);
-      setText('phaseMid', curOv <= 6 ? 'YET TO BAT' : curOv <= 15 ? `${s.runs - ppRuns}/${s.wickets - ppWkts}` : `${midRuns}/${midWkts}`);
-      setText('phaseDeath', curOv <= 15 ? 'YET TO BAT' : `${deathRuns}/${deathWkts} (${deathOv} OV)`);
+      setText('phasePP', l.phasePowerplay || (curOv <= 6 ? `${s.runs}/${s.wickets} (${s.overs} OV)` : 'SOURCE UNAVAILABLE'));
+      setText('phaseMid', l.phaseMiddle || (curOv <= 15 && curOv > 6 ? `${s.runs}/${s.wickets} (${s.overs} OV)` : curOv <= 6 ? 'YET TO BAT' : 'SOURCE UNAVAILABLE'));
+      setText('phaseDeath', l.phaseDeath || (curOv <= 15 ? 'YET TO BAT' : `${s.runs}/${s.wickets} (${s.overs} OV)`));
     }
 
     const bMaidens = String(l.bowlerMaidens || '0');
@@ -782,6 +805,7 @@
 
     const map={
       inningsText:l.innings,rateText:l.rateText,strikerName:l.strikerName,strikerRuns:l.strikerRuns,strikerBalls:l.strikerBalls,nonStrikerName:l.nonStrikerName,nonStrikerRuns:l.nonStrikerRuns,nonStrikerBalls:l.nonStrikerBalls,bowlerName:l.bowlerName,bowlerFigures:l.bowlerFigures,bowlerOvers:l.bowlerOvers,requirement:l.requirement,matchLabel:l.matchLabel,venueLabel:l.venue,
+      ltStat:`${sRuns} RUNS`,ltNumber:state.match.inningsNumber || 1,profileNumber:sRuns,bowlerProfileNumber:bWkts,
       compactStrikerName:l.strikerName,compactStrikerRuns:l.strikerRuns,compactStrikerBalls:l.strikerBalls,compactBowlerName:l.bowlerName,compactBowlerFigures:l.bowlerFigures,compactBowlerOvers:l.bowlerOvers,compactOvers:s.overs,compactScore:`${s.runs}/${s.wickets}`,
       // 16:9 Master Card
       masterRuns:s.runs,masterWickets:s.wickets,masterOvers:s.overs,masterRate:crr,masterRrr:rrr,masterTarget:targetVal,masterProjected:projected,
@@ -810,14 +834,36 @@
       anchorMasterBowlerStyle:b.name.includes('ROYALS') ? 'RIGHT-ARM FAST MEDIUM' : 'LEFT-ARM ORTHODOX SPIN',
       anchorMasterPartnershipLabel:partnershipLabel,anchorMasterPartnershipRuns:`${partRuns} RUNS`,anchorMasterPartnershipBalls:`${partBalls} BALLS`,anchorMasterPartnershipRate:partRate,
       anchorMasterTossText:state.live.tossText || `${b.name} WON TOSS & ELECTED TO BOWL`,
-      anchorMasterPhasePP:curOv <= 6 ? `${s.runs}/${s.wickets} (${s.overs} OV)` : `${ppRuns}/${ppWkts}`,
-      anchorMasterPhaseMid:curOv <= 6 ? 'YET TO BAT' : curOv <= 15 ? `${s.runs - ppRuns}/${s.wickets - ppWkts}` : `${midRuns}/${midWkts}`,
-      anchorMasterPhaseDeath:curOv <= 15 ? 'YET TO BAT' : `${deathRuns}/${deathWkts} (${deathOv} OV)`,
+      anchorMasterPhasePP:l.phasePowerplay || (curOv <= 6 ? `${s.runs}/${s.wickets} (${s.overs} OV)` : 'SOURCE UNAVAILABLE'),
+      anchorMasterPhaseMid:l.phaseMiddle || (curOv <= 15 && curOv > 6 ? `${s.runs}/${s.wickets} (${s.overs} OV)` : curOv <= 6 ? 'YET TO BAT' : 'SOURCE UNAVAILABLE'),
+      anchorMasterPhaseDeath:l.phaseDeath || (curOv <= 15 ? 'YET TO BAT' : `${s.runs}/${s.wickets} (${s.overs} OV)`),
       anchorMasterRate:crr,anchorMasterRrr:rrr,anchorMasterTarget:targetVal,
       // Dual screen
-      dualScore:`${s.runs}/${s.wickets}`,dualOvers:`${s.overs} OVERS · ${l.rateText}`,dualRequirement:l.requirement,dualBatters:`${l.strikerName} ${l.strikerRuns} (${l.strikerBalls}) · ${l.nonStrikerName} ${l.nonStrikerRuns} (${l.nonStrikerBalls})`,dualBowler:`${l.bowlerName} · ${l.bowlerFigures} (${l.bowlerOvers} ov)`,dualMatchLabel:l.matchLabel
+      dualScore:`${s.runs}/${s.wickets}`,dualOvers:`${s.overs} OVERS · ${l.rateText}`,dualRequirement:l.requirement,dualBatters:`${l.strikerName} ${l.strikerRuns} (${l.strikerBalls}) · ${l.nonStrikerName} ${l.nonStrikerRuns} (${l.nonStrikerBalls})`,dualBowler:`${l.bowlerName} · ${l.bowlerFigures} (${l.bowlerOvers} ov)`,dualMatchLabel:l.matchLabel,
+      partnershipLabel,partnershipStriker:l.strikerName,partnershipStrikerRuns:sRuns,partnershipStrikerBalls:sBalls,
+      partnershipNonStriker:l.nonStrikerName,partnershipNonStrikerRuns:nsRuns,partnershipNonStrikerBalls:nsBalls,partnershipRuns:partRuns,partnershipBalls:`${partBalls} BALLS`,
+      chaseNeed,chaseBalls,chaseRate:rrr,chaseWickets:Math.max(0,10-Number(s.wickets||0)),
+      summaryFooterScore:`${s.runs}/${s.wickets}`,summaryFooterRate:crr,summaryFooterOvers:s.overs,
+      bowlingFooterOvers:s.overs,bowlingFooterRuns:s.runs,bowlingFooterWickets:s.wickets,
+      projectedCurrent:projected,projected95:projectAt(9.5),projected105:projectAt(10.5),projected115:projectAt(11.5)
     };
     Object.entries(map).forEach(([id,v])=>setText(id,v));
+
+    const inningsScores = Array.isArray(state.match.inningsScores) ? state.match.inningsScores : [];
+    const scoreA = inningsScores.find(item => normalizeCode(item.teamCode) === normalizeCode(state.match.teamA));
+    const scoreB = inningsScores.find(item => normalizeCode(item.teamCode) === normalizeCode(state.match.teamB));
+    setText('resultAScore', scoreA ? `${scoreA.runs}/${scoreA.wickets}` : `${s.runs}/${s.wickets}`);
+    setText('resultAOvers', `${scoreA?.overs || s.overs} OV`);
+    setText('resultBScore', scoreB ? `${scoreB.runs}/${scoreB.wickets}` : '0/0');
+    setText('resultBOvers', `${scoreB?.overs || '0.0'} OV`);
+    setText('resultStatus', isCompleted ? 'OFFICIAL MATCH RESULT' : 'LIVE MATCH');
+    setText('resultText', state.match.resultText || l.requirement || 'RESULT PENDING');
+    const potmRow = state.match.playerOfMatch && Array.isArray(state.summary)
+      ? state.summary.find(row => String(row[0]).toUpperCase() === String(state.match.playerOfMatch).toUpperCase())
+      : null;
+    setText('potmRuns', potmRow?.[1]?.replace('*','') || '-');
+    setText('potmBalls', potmRow?.[2] || '-');
+    setText('potmStrikeRate', potmRow?.[5] || '-');
 
     // Update Win Probability bar
     const wpA = $('#masterWinProbA'); if (wpA) wpA.style.width = `${winProbA}%`;
@@ -1188,8 +1234,7 @@
       case 'dataUpdated': {
         const p = msg.payload || msg.data || msg;
         if(p.match){
-          if(p.match.teamA) state.match.teamA = p.match.teamA;
-          if(p.match.teamB) state.match.teamB = p.match.teamB;
+          Object.assign(state.match, p.match);
         }
         if(p.score){
           if(p.score.runs !== undefined) state.score.runs = Number(p.score.runs) || 0;
@@ -1212,6 +1257,8 @@
         }
         if(p.summary && Array.isArray(p.summary)) state.summary = p.summary;
         if(p.bowling && Array.isArray(p.bowling)) state.bowling = p.bowling;
+        if(p.profile && Array.isArray(p.profile)) state.profile = p.profile;
+        if(p.compare && Array.isArray(p.compare)) state.compare = p.compare;
         applyTeamTheme();
         // In-place update without re-animating or flickering the master card
         renderLists();
