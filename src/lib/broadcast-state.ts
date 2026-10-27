@@ -282,8 +282,9 @@ export function buildBroadcastStateFromMatch(
   let recent: string[] = ["-", "-", "-", "-", "-", "-"];
   if (parsedLive?.recentDeliveries?.length) {
     recent = [...parsedLive.recentDeliveries];
-  } else if (parsedLive?.oversByInnings?.[activeInningsNumber]?.[0]?.balls?.length) {
-    recent = [...parsedLive.oversByInnings[activeInningsNumber][0].balls];
+  } else if (parsedLive?.oversByInnings?.[activeInningsNumber]?.at?.(-1)?.balls?.length) {
+    const activeOvers = parsedLive.oversByInnings[activeInningsNumber];
+    recent = [...activeOvers[activeOvers.length - 1].balls];
   } else if (bOvers > 0) {
     const ballsInOver = bOvers % 6 || 6;
     recent = ["0", "1", "0", "1", "4", "W"].slice(0, ballsInOver);

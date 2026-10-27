@@ -228,8 +228,8 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
     });
     if (oversList.length > 0) {
       oversByInnings[innNum] = oversList;
-      if (recentDeliveries.length === 0 && oversList[0]?.balls) {
-        recentDeliveries = oversList[0].balls;
+      if (recentDeliveries.length === 0 && oversList.at(-1)?.balls) {
+        recentDeliveries = oversList.at(-1)!.balls;
       }
     }
   });
@@ -344,8 +344,9 @@ export function parseOnlineKhabarData(data: any, sourceUrl = ""): CricNepalParse
   const crr = parseFloat(crrText.match(/CRR:\s*([\d.]+)/i)?.[1] || "0") || 0;
 
   const activeInnNum = innings.find((i) => i.status === "LIVE")?.inningsNumber || (innings.length > 1 && status === "COMPLETED" ? 2 : (innings[0]?.inningsNumber || 1));
-  if (oversByInnings[activeInnNum]?.[0]?.balls?.length) {
-    recentDeliveries = oversByInnings[activeInnNum][0].balls;
+  const activeOvers = oversByInnings[activeInnNum] || [];
+  if (activeOvers.at(-1)?.balls?.length) {
+    recentDeliveries = activeOvers.at(-1)!.balls;
   }
 
   const scoreHeaderBatters: Array<{ name: string; runs: number; balls: number; isStriker: boolean }> = [];
