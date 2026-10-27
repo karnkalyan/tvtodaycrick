@@ -357,7 +357,7 @@ export default function ScoreEntryPage() {
 
   // CricNepal Match-Level Live Sync
   const handleCricNepalSync = useCallback(
-    async (force = false) => {
+    async (force = false, publishBroadcast = false) => {
       if (!selectedId) return;
       setIsCricNepalSyncing(true);
       setCricNepalSyncMsg(null);
@@ -374,7 +374,10 @@ export default function ScoreEntryPage() {
 
         if (res.match) {
           const fresh = await loadDetail(selectedId);
-          await syncMatchToBroadcast(fresh || res.match);
+          // Automatic source polling must not overwrite authoritative source
+          // state with stale local player selections. Manual sync can publish
+          // the score-entry state explicitly.
+          if (publishBroadcast) await syncMatchToBroadcast(fresh || res.match);
           const timeStr = new Date().toLocaleTimeString();
           setCricNepalLastSync(timeStr);
           setCricNepalSyncMsg(`Synced with CricNepal at ${timeStr}`);
@@ -393,7 +396,7 @@ export default function ScoreEntryPage() {
   useEffect(() => {
     if (!cricNepalAutoSync || !selectedId) return;
     const timer = setInterval(() => {
-      void handleCricNepalSync(false);
+      void handleCricNepalSync(false, false);
     }, 20000);
     return () => clearInterval(timer);
   }, [cricNepalAutoSync, selectedId, handleCricNepalSync]);
@@ -1419,7 +1422,7 @@ export default function ScoreEntryPage() {
                     <button
                       type="button"
                       className="button compact secondary"
-                      onClick={() => void handleCricNepalSync(false)}
+                      onClick={() => void handleCricNepalSync(false, true)}
                       disabled={isCricNepalSyncing}
                       title="Fetch and merge latest CricNepal match score, toss, innings, and extras without wiping manual work"
                       style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}

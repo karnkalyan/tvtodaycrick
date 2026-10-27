@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { NPL_FRANCHISE_BRANDS } from "@/lib/npl-franchises";
+import { dedupeMatchAliases } from "@/services/match.service";
 
 export const dynamic = "force-dynamic";
 
@@ -50,23 +51,10 @@ export async function GET() {
       },
     });
 
-    // Deduplicate and sort matches strictly by Match Number (Match 1, Match 2, ... Match 30)
-    function parseMatchNum(str?: string | null): number {
-      if (!str) return 999;
-      const m = str.match(/M(\d+)/i) || str.match(/Match\s*(\d+)/i) || str.match(/(\d+)/);
-      return m ? parseInt(m[1], 10) : 999;
-    }
-
-    const seenNums = new Set<number>();
-    const matches: typeof rawMatches = [];
-    for (const m of rawMatches) {
-      const num = parseMatchNum(m.matchNumber);
-      if (!seenNums.has(num)) {
-        seenNums.add(num);
-        matches.push(m);
-      }
-    }
-    matches.sort((a, b) => parseMatchNum(a.matchNumber) - parseMatchNum(b.matchNumber));
+    // Use the same canonical fixture selection as Score Entry. This prevents
+    // legacy aliases (e.g. Match 2 vs Season3-M2) from racing the broadcast
+    // controller with different player/stat records.
+    const matches = dedupeMatchAliases(rawMatches);
 
     // 3. Fetch Tournament Standings (Points Table) - deduplicated by distinct franchise
     const activeTournamentId = activeTournament?.id || 3;

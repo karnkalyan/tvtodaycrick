@@ -56,7 +56,7 @@ test("clean graphics poll persisted state when WebSocket delivery is unavailable
   const script = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
 
   assert.match(script, /async function refreshStateFromDb/);
-  assert.match(script, /fetch\('\/api\/broadcast\/state', \{ cache: 'no-store' \}\)/);
+  assert.match(script, /fetch\('\/api\/broadcast\/state\?live=' \+ Date\.now\(\), \{ cache: 'no-store' \}\)/);
   assert.match(script, /setInterval\(refreshStateFromDb, 1500\)/);
 });
 

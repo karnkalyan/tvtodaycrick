@@ -378,8 +378,8 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
     const load = async () => {
       try {
         const [stateResponse, dataResponse] = await Promise.all([
-          fetch("/api/broadcast/state", { cache: "no-store" }),
-          fetch("/api/broadcast/npl-data", { cache: "no-store" }),
+          fetch(`/api/broadcast/state?live=${Date.now()}`, { cache: "no-store" }),
+          fetch(`/api/broadcast/npl-data?live=${Date.now()}`, { cache: "no-store" }),
         ]);
         if (!cancelled && stateResponse.ok) {
           const payload = await stateResponse.json();
@@ -476,7 +476,7 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   useEffect(() => {
     const timer = setInterval(async () => {
       try {
-        const response = await fetch("/api/broadcast/state", { cache: "no-store" });
+        const response = await fetch(`/api/broadcast/state?live=${Date.now()}`, { cache: "no-store" });
         if (!response.ok) return;
         const payload = await response.json();
         if (payload.isReset || !payload.state) {

@@ -1932,15 +1932,18 @@
 
   let broadcastWs = null;
   let lastDbStateVersion = '';
+  let lastDbStateSnapshot = '';
 
   async function refreshStateFromDb(){
     try{
-      const res = await fetch('/api/broadcast/state', { cache: 'no-store' });
+      const res = await fetch('/api/broadcast/state?live=' + Date.now(), { cache: 'no-store' });
       if(!res.ok) return;
       const data = await res.json();
       const version = String(data?.updatedAt || '');
-      if(!data?.state || (version && version === lastDbStateVersion)) return;
+      const snapshot = data?.state ? JSON.stringify(data.state) : '';
+      if(!data?.state || (version && version === lastDbStateVersion && snapshot === lastDbStateSnapshot)) return;
       lastDbStateVersion = version;
+      lastDbStateSnapshot = snapshot;
       const prev = deepClone(state);
       state = merge(defaults, data.state);
       render(prev, false);
