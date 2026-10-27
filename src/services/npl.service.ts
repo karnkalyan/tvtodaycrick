@@ -932,63 +932,44 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
         okUrl = season3OkUrl || okUrl;
       }
 
+      const discoveryParams = {
+        matchNumber: m.matchNumber,
+        homeTeamName: m.homeTeam?.name,
+        awayTeamName: m.awayTeam?.name,
+        title: m.title,
+        stage: m.stage,
+        notes: m.notes,
+      };
       const cnCandidateUrls =
-        year === "2026"
-          ? getCricNepalUrlsForMatch({
-              matchNumber: m.matchNumber,
-              homeTeamName: m.homeTeam?.name,
-              awayTeamName: m.awayTeam?.name,
-              notes: m.notes,
-            })
-          : [];
+        year === "2026" ? getCricNepalUrlsForMatch(discoveryParams) : [];
       const cnUrl = cnCandidateUrls[0] || "";
 
       let parsed: any = null;
 
-      // Multi-provider live match resolution:
-      // Attempts preferred provider first, and reconciles with CricNepal's authoritative CN Engine scorecard
-      if (preferredProvider === "onlinekhabar" && okUrl) {
+      // 1. Primary: CricNepal authoritative CN Engine scorecard first
+      if (year === "2026") {
+        const cnResult = await reconcileWithCricNepalScorecard(null, cnCandidateUrls, discoveryParams);
+        if (cnResult.data) {
+          parsed = cnResult.data;
+        }
+      }
+
+      const cnHasActivity =
+        parsed &&
+        Array.isArray(parsed.innings) &&
+        parsed.innings.some((i: any) => i.balls > 0 || i.runs > 0 || i.wickets > 0);
+
+      // 2. Fallback / cross-check with OnlineKhabar if CricNepal is unreachable or has not started scoring yet
+      if ((!cnHasActivity || preferredProvider === "onlinekhabar") && okUrl) {
         try {
-          parsed = await fetchOnlineKhabarLiveMatch(okUrl);
+          const okData = await fetchOnlineKhabarLiveMatch(okUrl);
+          if (okData) {
+            const reconciled = parsed
+              ? await reconcileWithCricNepalScorecard(okData, cnCandidateUrls, discoveryParams)
+              : { data: okData };
+            parsed = reconciled.data;
+          }
         } catch {}
-        if (cnCandidateUrls.length > 0) {
-          const reconciled = await reconcileWithCricNepalScorecard(parsed, cnCandidateUrls);
-          parsed = reconciled.data;
-        }
-      } else if (preferredProvider === "nplt20league") {
-        if (okUrl) {
-          try { parsed = await fetchOnlineKhabarLiveMatch(okUrl); } catch {}
-        }
-        if (cnCandidateUrls.length > 0) {
-          const reconciled = await reconcileWithCricNepalScorecard(parsed, cnCandidateUrls);
-          parsed = reconciled.data;
-        }
-        if (!parsed) {
-          try {
-            const snapshot = await fetchNplT20LiveSnapshot();
-            const list = Array.isArray(snapshot) ? snapshot : (snapshot?.matches || snapshot?.data?.matches || []);
-            const matchedNpl = list.find((item: any) =>
-              m.title.toLowerCase().includes((item.team1?.name || "").toLowerCase()) ||
-              m.title.toLowerCase().includes((item.team2?.name || "").toLowerCase()) ||
-              (m.homeTeam?.name && item.team1?.name?.includes(m.homeTeam.name)) ||
-              (m.awayTeam?.name && item.team2?.name?.includes(m.awayTeam.name))
-            );
-            if (matchedNpl) {
-              parsed = convertNplT20LiveMatchToParsed(matchedNpl);
-            }
-          } catch {}
-        }
-      } else {
-        // Default (cricnepal): fetch CricNepal authoritative scorecard, and cross-enrich/fallback with OnlineKhabar
-        if (okUrl) {
-          try {
-            parsed = await fetchOnlineKhabarLiveMatch(okUrl);
-          } catch {}
-        }
-        if (cnCandidateUrls.length > 0) {
-          const reconciled = await reconcileWithCricNepalScorecard(parsed, cnCandidateUrls);
-          parsed = reconciled.data;
-        }
       }
 
       // If still not parsed, try NPLT20 snapshot as universal fallback

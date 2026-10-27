@@ -1,7 +1,7 @@
 import { load } from "cheerio";
 import dns from "node:dns";
 import { prisma } from "./prisma";
-import { fetchSource } from "./npl-source";
+import { fetchSource, NPL_SOURCE, parseFixtures } from "./npl-source";
 import type { Prisma } from "@prisma/client";
 import { syncMatchToBroadcastDb } from "./broadcast-state";
 import { cleanPlayerDisplayName } from "./onlinekhabar-live";
@@ -655,13 +655,19 @@ export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNep
   }
 }
 
+let tournamentFixtureCache: { at: number; urlsByOrdinal: Map<number, string>; urlsByTeams: Map<string, string> } | null = null;
+const TOURNAMENT_CACHE_TTL_MS = 60000;
+
 /**
- * Builds deterministic CricNepal match URL candidates for a Season 3 match.
+ * Builds deterministic CricNepal match URL candidates for any current or upcoming match
+ * without any hardcoded match URLs.
  */
 export function getCricNepalUrlsForMatch(params: {
   matchNumber?: string | null;
   homeTeamName?: string | null;
   awayTeamName?: string | null;
+  title?: string | null;
+  stage?: string | null;
   notes?: string | null;
 }): string[] {
   const candidates: string[] = [];
@@ -678,6 +684,14 @@ export function getCricNepalUrlsForMatch(params: {
     }
   }
 
+  let homeName = (params.homeTeamName || "").trim();
+  let awayName = (params.awayTeamName || "").trim();
+  if ((!homeName || !awayName) && params.title && /\svs\s/i.test(params.title)) {
+    const parts = params.title.split(/\svs\s/i);
+    if (!homeName) homeName = (parts[0] || "").trim();
+    if (!awayName) awayName = (parts[1] || "").trim();
+  }
+
   const slugify = (name: string) =>
     name
       .trim()
@@ -685,48 +699,123 @@ export function getCricNepalUrlsForMatch(params: {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
 
-  if (ordinal >= 1 && ordinal <= 28 && params.homeTeamName && params.awayTeamName) {
-    const homeSlug = slugify(params.homeTeamName);
-    const awaySlug = slugify(params.awayTeamName);
-    if (homeSlug && awaySlug) {
-      candidates.push(
-        `https://www.cricnepal.com/match/${homeSlug}-vs-${awaySlug}-match-${ordinal}-nepal-premier-league-2026`,
-        `https://www.cricnepal.com/match/${awaySlug}-vs-${homeSlug}-match-${ordinal}-nepal-premier-league-2026`
-      );
+  if (homeName && awayName) {
+    const homeSlug = slugify(homeName);
+    const awaySlug = slugify(awayName);
+    if (homeSlug && awaySlug && homeSlug !== "tba" && awaySlug !== "tba") {
+      if (ordinal >= 1) {
+        candidates.push(
+          `https://www.cricnepal.com/match/${homeSlug}-vs-${awaySlug}-match-${ordinal}-nepal-premier-league-2026`,
+          `https://www.cricnepal.com/match/${awaySlug}-vs-${homeSlug}-match-${ordinal}-nepal-premier-league-2026`
+        );
+      }
+      if (params.stage && !/^league$/i.test(params.stage)) {
+        const stageSlug = slugify(params.stage);
+        if (stageSlug) {
+          candidates.push(
+            `https://www.cricnepal.com/match/${homeSlug}-vs-${awaySlug}-${stageSlug}-nepal-premier-league-2026`,
+            `https://www.cricnepal.com/match/${awaySlug}-vs-${homeSlug}-${stageSlug}-nepal-premier-league-2026`
+          );
+        }
+      }
     }
-  } else if (ordinal === 1) {
-    candidates.push(
-      "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026"
-    );
   }
 
   return [...new Set(candidates)];
 }
 
 /**
- * Reconciles a parsed live match (e.g. from OnlineKhabar) with CricNepal's authoritative
- * CN Engine scorecard so scorer undo/leg-bye corrections (such as Match 3 ball 9.6 where
- * Harmeet Singh is 19 off 13b with 1 leg bye instead of OnlineKhabar's uncorrected 20 off 13b)
- * are always reflected accurately.
+ * Dynamically discovers a match's CricNepal URL from the CricNepal tournament fixture feed
+ * if direct slug candidates do not resolve.
+ */
+export async function discoverCricNepalMatchUrl(params: {
+  matchNumber?: string | null;
+  homeTeamName?: string | null;
+  awayTeamName?: string | null;
+  title?: string | null;
+}): Promise<string | null> {
+  try {
+    if (!tournamentFixtureCache || Date.now() - tournamentFixtureCache.at > TOURNAMENT_CACHE_TTL_MS) {
+      const html = await fetchSource(NPL_SOURCE);
+      const fixtures = parseFixtures(html, NPL_SOURCE);
+      const urlsByOrdinal = new Map<number, string>();
+      const urlsByTeams = new Map<string, string>();
+      fixtures.forEach((f, idx) => {
+        if (!f.sourceUrl) return;
+        const ord = Number(f.number.match(/(\d+)$/)?.[1]) || idx + 1;
+        urlsByOrdinal.set(ord, f.sourceUrl);
+        if (f.home && f.away) {
+          urlsByTeams.set(`${f.home.toLowerCase()}|${f.away.toLowerCase()}`, f.sourceUrl);
+        }
+      });
+      tournamentFixtureCache = { at: Date.now(), urlsByOrdinal, urlsByTeams };
+    }
+
+    const matchNum = (params.matchNumber || "").trim();
+    const ordinal = Number(matchNum.match(/(\d+)$/)?.[1]);
+    if (ordinal && tournamentFixtureCache.urlsByOrdinal.has(ordinal)) {
+      return tournamentFixtureCache.urlsByOrdinal.get(ordinal) || null;
+    }
+
+    const home = (params.homeTeamName || "").trim().toLowerCase();
+    const away = (params.awayTeamName || "").trim().toLowerCase();
+    if (home && away) {
+      return (
+        tournamentFixtureCache.urlsByTeams.get(`${home}|${away}`) ||
+        tournamentFixtureCache.urlsByTeams.get(`${away}|${home}`) ||
+        null
+      );
+    }
+  } catch {
+    // discovery optional
+  }
+  return null;
+}
+
+/**
+ * Fetches and reconciles live match data using CricNepal's authoritative CN Engine scorecard
+ * as the primary source of truth (with automatic fallback/reconciliation against OnlineKhabar).
  */
 export async function reconcileWithCricNepalScorecard(
   primaryData: CricNepalParsedLiveMatch | null,
-  cnCandidateUrls: string[]
+  cnCandidateUrls: string[],
+  discoveryParams?: {
+    matchNumber?: string | null;
+    homeTeamName?: string | null;
+    awayTeamName?: string | null;
+    title?: string | null;
+  }
 ): Promise<{ data: CricNepalParsedLiveMatch | null; usedUrl?: string }> {
   let cnData: CricNepalParsedLiveMatch | null = null;
   let cnUsedUrl: string | undefined;
 
-  for (const url of cnCandidateUrls) {
+  const urlsToTry = [...cnCandidateUrls];
+  for (const url of urlsToTry) {
     if (!url) continue;
     try {
       const fetched = await fetchCricNepalLiveMatch(url);
-      if (fetched && fetched.innings.some((i) => i.balls > 0 || i.runs > 0 || i.wickets > 0)) {
+      if (fetched && (fetched.innings.some((i) => i.balls > 0 || i.runs > 0 || i.wickets > 0) || !primaryData)) {
         cnData = fetched;
         cnUsedUrl = url;
         break;
       }
     } catch {
       // try next candidate
+    }
+  }
+
+  if (!cnData && discoveryParams) {
+    const discoveredUrl = await discoverCricNepalMatchUrl(discoveryParams);
+    if (discoveredUrl && !urlsToTry.includes(discoveredUrl)) {
+      try {
+        const fetched = await fetchCricNepalLiveMatch(discoveredUrl);
+        if (fetched && (fetched.innings.some((i) => i.balls > 0 || i.runs > 0 || i.wickets > 0) || !primaryData)) {
+          cnData = fetched;
+          cnUsedUrl = discoveredUrl;
+        }
+      } catch {
+        // ignore
+      }
     }
   }
 

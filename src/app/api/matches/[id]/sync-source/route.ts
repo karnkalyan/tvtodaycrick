@@ -48,52 +48,66 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Fallback URLs
     const matchNum = match.matchNumber || "";
-    const ordinal = Number(matchNum.match(/(\d+)$/)?.[1]);
     const okFallbackUrl = getOnlineKhabarUrlForMatch(matchNum) || "";
     const isSeasonThreeFixture = /^Season3-M\d+$/i.test(matchNum);
-    // Season 3 has a stable OnlineKhabar sequence: Match 1 = 315,
-    // Match 2 = 316, Match 3 = 317, etc. Old CricNepal URLs in fixture notes
-    // must not silently override that current source mapping.
     if (!explicitSourceUrl && isSeasonThreeFixture && okFallbackUrl) {
       sourceUrl = okFallbackUrl;
     }
-    const cnCandidateUrls = getCricNepalUrlsForMatch({
+
+    const discoveryParams = {
       matchNumber: match.matchNumber,
       homeTeamName: match.homeTeam?.name,
       awayTeamName: match.awayTeam?.name,
+      title: match.title,
+      stage: match.stage,
       notes: match.notes,
-    });
+    };
+    const cnCandidateUrls = getCricNepalUrlsForMatch(discoveryParams);
     const cnFallbackUrl = cnCandidateUrls[0] || "";
 
     let parsedData: any = null;
-    let usedUrl = sourceUrl || cnFallbackUrl || okFallbackUrl;
+    let usedUrl = explicitSourceUrl || cnFallbackUrl || sourceUrl || okFallbackUrl;
 
-    if (sourceUrl.includes("onlinekhabar.com")) {
+    if (explicitSourceUrl && explicitSourceUrl.includes("cricnepal.com")) {
+      parsedData = await fetchCricNepalLiveMatch(explicitSourceUrl);
+      usedUrl = explicitSourceUrl;
+    } else if (explicitSourceUrl && explicitSourceUrl.includes("onlinekhabar.com")) {
       try {
-        parsedData = await fetchOnlineKhabarLiveMatch(sourceUrl);
+        parsedData = await fetchOnlineKhabarLiveMatch(explicitSourceUrl);
+        usedUrl = explicitSourceUrl;
       } catch {
         // fallback to CricNepal below
       }
-      if (cnCandidateUrls.length > 0) {
-        const reconciled = await reconcileWithCricNepalScorecard(parsedData, cnCandidateUrls);
-        parsedData = reconciled.data;
-        if (reconciled.usedUrl) usedUrl = reconciled.usedUrl;
-      }
-    } else if (sourceUrl.includes("cricnepal.com")) {
-      parsedData = await fetchCricNepalLiveMatch(sourceUrl);
+      const reconciled = await reconcileWithCricNepalScorecard(parsedData, cnCandidateUrls, discoveryParams);
+      parsedData = reconciled.data;
+      if (reconciled.usedUrl) usedUrl = reconciled.usedUrl;
     } else {
-      // Try CricNepal first, fallback to OnlineKhabar
-      if (cnCandidateUrls.length > 0) {
-        const reconciled = await reconcileWithCricNepalScorecard(null, cnCandidateUrls);
-        parsedData = reconciled.data;
-        if (reconciled.usedUrl) usedUrl = reconciled.usedUrl;
+      // Primary: CricNepal authoritative CN Engine scorecard first
+      const cnResult = await reconcileWithCricNepalScorecard(null, cnCandidateUrls, discoveryParams);
+      if (cnResult.data) {
+        parsedData = cnResult.data;
+        if (cnResult.usedUrl) usedUrl = cnResult.usedUrl;
       }
-      if (!parsedData && okFallbackUrl) {
+
+      // Fallback / cross-check with OnlineKhabar if CricNepal is unreachable or has not started scoring yet
+      const cnHasActivity =
+        parsedData &&
+        Array.isArray(parsedData.innings) &&
+        parsedData.innings.some((i: any) => i.balls > 0 || i.runs > 0 || i.wickets > 0);
+
+      if (!cnHasActivity && (okFallbackUrl || sourceUrl.includes("onlinekhabar.com"))) {
+        const targetOkUrl = okFallbackUrl || sourceUrl;
         try {
-          parsedData = await fetchOnlineKhabarLiveMatch(okFallbackUrl);
-          usedUrl = okFallbackUrl;
+          const okData = await fetchOnlineKhabarLiveMatch(targetOkUrl);
+          if (okData) {
+            const reconciled = parsedData
+              ? await reconcileWithCricNepalScorecard(okData, cnCandidateUrls, discoveryParams)
+              : { data: okData, usedUrl: targetOkUrl };
+            parsedData = reconciled.data;
+            usedUrl = reconciled.usedUrl || targetOkUrl;
+          }
         } catch {
-          // fallback
+          // keep CricNepal scheduled state if available
         }
       }
     }
