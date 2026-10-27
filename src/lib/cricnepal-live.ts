@@ -294,25 +294,229 @@ export function parseCricNepalMatchHtml(html: string, sourceUrl = ""): CricNepal
     });
   }
 
-  // Live Summary (batters, bowlers, partnership)
+  const currentInningsNumber = Number(
+    matchObj?.current_innings_number || stateRoot?.state?.innings_number || innings[innings.length - 1]?.inningsNumber || 1
+  );
+
+  // Full scorecard, FOW, Overs, and Live Summary from stateRoot.live_summary
   let liveSummary: CricNepalParsedLiveMatch["liveSummary"] = undefined;
+  const playerPerformances: NonNullable<CricNepalParsedLiveMatch["playerPerformances"]> = [];
+  const fowByInnings: NonNullable<CricNepalParsedLiveMatch["fowByInnings"]> = {};
+  const oversByInnings: NonNullable<CricNepalParsedLiveMatch["oversByInnings"]> = {};
+  let recentDeliveries: string[] = [];
+
   if (stateRoot?.live_summary) {
     const ls = stateRoot.live_summary;
-    const currentBatters = Array.isArray(ls.current_batters)
-      ? ls.current_batters.map((b: any) => ({
-          name: b.name || "",
+
+    // 1. Batting cards by innings
+    const battingByInnings: Record<string, any[]> =
+      ls.batting_cards_by_innings && typeof ls.batting_cards_by_innings === "object" && Object.keys(ls.batting_cards_by_innings).length > 0
+        ? ls.batting_cards_by_innings
+        : Array.isArray(ls.batting_card) && ls.batting_card.length > 0
+          ? { [String(currentInningsNumber)]: ls.batting_card }
+          : {};
+
+    for (const [innKey, batters] of Object.entries(battingByInnings)) {
+      const innNum = Number(innKey) || 1;
+      if (!Array.isArray(batters)) continue;
+      const innInfo = innings.find((i) => i.inningsNumber === innNum);
+      for (const b of batters) {
+        const name = cleanPlayerDisplayName(b.name || b.player?.name || "");
+        if (!name) continue;
+        const runs = Number(b.runs) || 0;
+        const balls = Number(b.balls) || 0;
+        const fours = Number(b.fours) || 0;
+        const sixes = Number(b.sixes) || 0;
+        const dismissalDetail = String(b.dismissal_detail || "").trim();
+        const statusStr = String(b.status || "").trim();
+        const isStriker = !!b.is_striker;
+        const isNonStriker = !!b.is_non_striker;
+        const hasBatted =
+          balls > 0 ||
+          runs > 0 ||
+          isStriker ||
+          isNonStriker ||
+          !!dismissalDetail ||
+          /not\s*out|batting|retired|out|lbw|run\s*out|st\s|c\s|b\s/i.test(statusStr);
+        if (!hasBatted) continue;
+
+        const isNotOut = !dismissalDetail && (/not\s*out|batting/i.test(statusStr) || isStriker || isNonStriker);
+        const strikeRate =
+          Number(b.strike_rate) || (balls > 0 ? Number(((runs / balls) * 100).toFixed(2)) : 0);
+
+        playerPerformances.push({
+          name,
+          teamName: innInfo?.battingTeamName,
+          innings: innNum,
+          type: "BATSMAN",
+          batting: {
+            runs,
+            balls,
+            fours,
+            sixes,
+            strikeRate,
+            dismissal: dismissalDetail || (isNotOut ? "not out" : statusStr || "out"),
+            isNotOut,
+          },
+        });
+      }
+    }
+
+    // 2. Bowling cards by innings
+    const bowlingByInnings: Record<string, any[]> =
+      ls.bowling_cards_by_innings && typeof ls.bowling_cards_by_innings === "object" && Object.keys(ls.bowling_cards_by_innings).length > 0
+        ? ls.bowling_cards_by_innings
+        : Array.isArray(ls.bowling_card) && ls.bowling_card.length > 0
+          ? { [String(currentInningsNumber)]: ls.bowling_card }
+          : {};
+
+    for (const [innKey, bowlers] of Object.entries(bowlingByInnings)) {
+      const innNum = Number(innKey) || 1;
+      if (!Array.isArray(bowlers)) continue;
+      const innInfo = innings.find((i) => i.inningsNumber === innNum);
+      for (const bw of bowlers) {
+        const name = cleanPlayerDisplayName(bw.name || bw.player?.name || "");
+        if (!name) continue;
+        const overs = bw.overs !== undefined && bw.overs !== null ? String(bw.overs) : "0.0";
+        const balls = Number(bw.balls) || oversStringToBalls(overs);
+        const runs = Number(bw.runs) || 0;
+        const wickets = Number(bw.wickets) || 0;
+        const maidens = Number(bw.maidens) || 0;
+        if (balls === 0 && runs === 0 && wickets === 0 && !bw.is_current) continue;
+        const economy =
+          Number(bw.economy) || (balls > 0 ? Number(((runs / balls) * 6).toFixed(2)) : 0);
+
+        playerPerformances.push({
+          name,
+          teamName: innInfo?.bowlingTeamName,
+          innings: innNum,
+          type: "BOWLER",
+          bowling: {
+            overs,
+            maidens,
+            runs,
+            wickets,
+            economy,
+          },
+        });
+      }
+    }
+
+    // 3. Timeline overs & Fall of wickets by innings
+    const timelineByInnings: Record<string, any[]> =
+      ls.timeline_overs_by_innings && typeof ls.timeline_overs_by_innings === "object" && Object.keys(ls.timeline_overs_by_innings).length > 0
+        ? ls.timeline_overs_by_innings
+        : Array.isArray(ls.timeline_overs) && ls.timeline_overs.length > 0
+          ? { [String(currentInningsNumber)]: ls.timeline_overs }
+          : {};
+
+    const normalizeCnToken = (tok: any): string => {
+      const raw = String(tok ?? "").trim();
+      if (!raw) return ".";
+      const lower = raw.toLowerCase();
+      if (lower === "w") return "W";
+      if (/^\d*w$/.test(lower) || /^\d*wd$/.test(lower)) return `${lower.replace(/wd?$/, "") || "1"}WD`;
+      if (/^\d*nb$/.test(lower)) return `${lower.slice(0, -2) || "1"}NB`;
+      if (/^\d*lb$/.test(lower)) return `${lower.slice(0, -2) || "1"}LB`;
+      if (/^\d*b$/.test(lower)) return `${lower.slice(0, -1) || "1"}B`;
+      return raw.toUpperCase();
+    };
+
+    for (const [innKey, rawOvers] of Object.entries(timelineByInnings)) {
+      const innNum = Number(innKey) || 1;
+      if (!Array.isArray(rawOvers)) continue;
+
+      const sortedOvers = [...rawOvers].sort((a, b) => {
+        const na = Number(a.display_over) || (typeof a.over_number === "number" ? a.over_number + 1 : 0);
+        const nb = Number(b.display_over) || (typeof b.over_number === "number" ? b.over_number + 1 : 0);
+        return na - nb;
+      });
+
+      oversByInnings[innNum] = sortedOvers.map((ov) => {
+        const overNum = Number(ov.display_over) || (typeof ov.over_number === "number" ? ov.over_number + 1 : 1);
+        const balls = Array.isArray(ov.tokens)
+          ? ov.tokens.map(normalizeCnToken)
+          : [];
+        return {
+          overNo: `Ov ${overNum}`,
+          score: `${Number(ov.runs) || 0} runs`,
+          balls,
+        };
+      });
+
+      const wicketCards: any[] = [];
+      for (const ov of sortedOvers) {
+        if (Array.isArray(ov.summary_cards)) {
+          for (const sc of ov.summary_cards) {
+            if (sc && sc.kind === "wicket") {
+              wicketCards.push(sc);
+            }
+          }
+        }
+      }
+      if (wicketCards.length > 0) {
+        wicketCards.sort((a, b) => (Number(a.wicket_number) || 0) - (Number(b.wicket_number) || 0));
+        fowByInnings[innNum] = wicketCards.map((w) => [
+          `${w.fow_runs ?? 0}/${w.wicket_number ?? 1}`,
+          cleanPlayerDisplayName(w.title || w.players?.[0]?.name || "Batter"),
+          String(w.display_ball || "0.0"),
+        ]);
+      }
+    }
+
+    if (!fowByInnings[currentInningsNumber]?.length && Array.isArray(ls.fall_of_wickets) && ls.fall_of_wickets.length > 0) {
+      fowByInnings[currentInningsNumber] = ls.fall_of_wickets.map((w: any) => [
+        String(w.score?.label || `${w.score?.runs ?? 0}/${w.score?.wickets ?? 1}`),
+        cleanPlayerDisplayName(w.player?.name || "Batter"),
+        String(w.display_ball || "0.0"),
+      ]);
+    }
+
+    const activeInningsOvers = oversByInnings[currentInningsNumber] || [];
+    if (activeInningsOvers.length > 0) {
+      recentDeliveries = activeInningsOvers[activeInningsOvers.length - 1].balls;
+    } else if (Array.isArray(ls.current_over?.tokens)) {
+      recentDeliveries = ls.current_over.tokens.map(normalizeCnToken);
+    }
+
+    // 4. Current batters and bowler (with fallback to active innings cards when completed)
+    let currentBatters = Array.isArray(ls.current_batters)
+      ? ls.current_batters
+          .map((b: any) => ({
+            name: cleanPlayerDisplayName(b.name || ""),
+            runs: Number(b.runs) || 0,
+            balls: Number(b.balls) || 0,
+            fours: Number(b.fours) || 0,
+            sixes: Number(b.sixes) || 0,
+            strikeRate: Number(b.strike_rate) || 0,
+            isStriker: !!b.is_striker,
+          }))
+          .filter((b: any) => !!b.name)
+      : [];
+
+    if (currentBatters.length === 0) {
+      const activeBatCard = battingByInnings[String(currentInningsNumber)] || [];
+      if (Array.isArray(activeBatCard) && activeBatCard.length > 0) {
+        const notOut = activeBatCard.filter(
+          (b: any) => !b.dismissal_detail && (/not\s*out|batting/i.test(String(b.status || "")) || b.is_striker || b.is_non_striker)
+        );
+        const dismissed = activeBatCard.filter((b: any) => !notOut.includes(b));
+        const chosen = [...notOut, ...dismissed.slice(-2)].slice(0, 2);
+        currentBatters = chosen.map((b: any, idx: number) => ({
+          name: cleanPlayerDisplayName(b.name || ""),
           runs: Number(b.runs) || 0,
           balls: Number(b.balls) || 0,
           fours: Number(b.fours) || 0,
           sixes: Number(b.sixes) || 0,
           strikeRate: Number(b.strike_rate) || 0,
-          isStriker: !!b.is_striker,
-        }))
-      : [];
+          isStriker: idx === 0,
+        }));
+      }
+    }
 
-    const currentBowler = ls.current_bowler
+    let currentBowler = ls.current_bowler?.name
       ? {
-          name: ls.current_bowler.name || "",
+          name: cleanPlayerDisplayName(ls.current_bowler.name || ""),
           overs: ls.current_bowler.overs ? String(ls.current_bowler.overs) : "0.0",
           runs: Number(ls.current_bowler.runs) || 0,
           wickets: Number(ls.current_bowler.wickets) || 0,
@@ -320,6 +524,27 @@ export function parseCricNepalMatchHtml(html: string, sourceUrl = ""): CricNepal
           maidens: Number(ls.current_bowler.maidens) || 0,
         }
       : null;
+
+    if (!currentBowler) {
+      const activeBowlCard = bowlingByInnings[String(currentInningsNumber)] || [];
+      const activeTimeline = timelineByInnings[String(currentInningsNumber)] || [];
+      const latestOverBowlerName = cleanPlayerDisplayName(activeTimeline[0]?.bowler?.name || "");
+      const matchedBowler =
+        (latestOverBowlerName &&
+          Array.isArray(activeBowlCard) &&
+          activeBowlCard.find((bw: any) => cleanPlayerDisplayName(bw.name || "") === latestOverBowlerName)) ||
+        (Array.isArray(activeBowlCard) ? activeBowlCard[activeBowlCard.length - 1] : null);
+      if (matchedBowler?.name) {
+        currentBowler = {
+          name: cleanPlayerDisplayName(matchedBowler.name),
+          overs: matchedBowler.overs ? String(matchedBowler.overs) : "0.0",
+          runs: Number(matchedBowler.runs) || 0,
+          wickets: Number(matchedBowler.wickets) || 0,
+          economy: Number(matchedBowler.economy) || 0,
+          maidens: Number(matchedBowler.maidens) || 0,
+        };
+      }
+    }
 
     liveSummary = {
       currentBatters,
@@ -355,9 +580,13 @@ export function parseCricNepalMatchHtml(html: string, sourceUrl = ""): CricNepal
       id: teamB.id,
     },
     toss,
-    currentInningsNumber: Number(matchObj?.current_innings_number || stateRoot?.state?.innings_number || 1),
+    currentInningsNumber,
     innings,
     liveSummary,
+    playerPerformances: playerPerformances.length > 0 ? playerPerformances : undefined,
+    fowByInnings: Object.keys(fowByInnings).length > 0 ? fowByInnings : undefined,
+    oversByInnings: Object.keys(oversByInnings).length > 0 ? oversByInnings : undefined,
+    recentDeliveries: recentDeliveries.length > 0 ? recentDeliveries : undefined,
   };
 }
 
@@ -427,6 +656,156 @@ export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNep
 }
 
 /**
+ * Builds deterministic CricNepal match URL candidates for a Season 3 match.
+ */
+export function getCricNepalUrlsForMatch(params: {
+  matchNumber?: string | null;
+  homeTeamName?: string | null;
+  awayTeamName?: string | null;
+  notes?: string | null;
+}): string[] {
+  const candidates: string[] = [];
+  const matchNum = (params.matchNumber || "").trim();
+  const ordinal = Number(matchNum.match(/(\d+)$/)?.[1]);
+
+  if (params.notes) {
+    const noteMatch = params.notes.match(/Source:\s*(https?:\/\/[^\s]+cricnepal\.com\/match\/[^\s\r\n]+)/i);
+    if (noteMatch) {
+      const noteUrl = noteMatch[1].trim();
+      if (!ordinal || noteUrl.includes(`-match-${ordinal}-`)) {
+        candidates.push(noteUrl);
+      }
+    }
+  }
+
+  const slugify = (name: string) =>
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+
+  if (ordinal >= 1 && ordinal <= 28 && params.homeTeamName && params.awayTeamName) {
+    const homeSlug = slugify(params.homeTeamName);
+    const awaySlug = slugify(params.awayTeamName);
+    if (homeSlug && awaySlug) {
+      candidates.push(
+        `https://www.cricnepal.com/match/${homeSlug}-vs-${awaySlug}-match-${ordinal}-nepal-premier-league-2026`,
+        `https://www.cricnepal.com/match/${awaySlug}-vs-${homeSlug}-match-${ordinal}-nepal-premier-league-2026`
+      );
+    }
+  } else if (ordinal === 1) {
+    candidates.push(
+      "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026"
+    );
+  }
+
+  return [...new Set(candidates)];
+}
+
+/**
+ * Reconciles a parsed live match (e.g. from OnlineKhabar) with CricNepal's authoritative
+ * CN Engine scorecard so scorer undo/leg-bye corrections (such as Match 3 ball 9.6 where
+ * Harmeet Singh is 19 off 13b with 1 leg bye instead of OnlineKhabar's uncorrected 20 off 13b)
+ * are always reflected accurately.
+ */
+export async function reconcileWithCricNepalScorecard(
+  primaryData: CricNepalParsedLiveMatch | null,
+  cnCandidateUrls: string[]
+): Promise<{ data: CricNepalParsedLiveMatch | null; usedUrl?: string }> {
+  let cnData: CricNepalParsedLiveMatch | null = null;
+  let cnUsedUrl: string | undefined;
+
+  for (const url of cnCandidateUrls) {
+    if (!url) continue;
+    try {
+      const fetched = await fetchCricNepalLiveMatch(url);
+      if (fetched && fetched.innings.some((i) => i.balls > 0 || i.runs > 0 || i.wickets > 0)) {
+        cnData = fetched;
+        cnUsedUrl = url;
+        break;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  if (!cnData) {
+    return { data: primaryData };
+  }
+  if (!primaryData) {
+    return { data: cnData, usedUrl: cnUsedUrl };
+  }
+
+  const merged: CricNepalParsedLiveMatch = {
+    ...primaryData,
+    innings: [...primaryData.innings],
+    playerPerformances: [...(primaryData.playerPerformances || [])],
+    fowByInnings: { ...(primaryData.fowByInnings || {}) },
+    oversByInnings: { ...(primaryData.oversByInnings || {}) },
+  };
+
+  for (const cnInn of cnData.innings) {
+    const idx = merged.innings.findIndex((i) => i.inningsNumber === cnInn.inningsNumber);
+    const okInn = idx >= 0 ? merged.innings[idx] : null;
+    const cnIsAuthoritative =
+      !okInn || cnInn.balls >= okInn.balls || cnInn.status === "COMPLETED";
+
+    if (cnIsAuthoritative) {
+      if (idx >= 0) {
+        merged.innings[idx] = cnInn;
+      } else {
+        merged.innings.push(cnInn);
+      }
+
+      const cnPerfs = (cnData.playerPerformances || []).filter(
+        (p) => p.innings === cnInn.inningsNumber
+      );
+      if (cnPerfs.length > 0) {
+        merged.playerPerformances = [
+          ...(merged.playerPerformances || []).filter((p) => p.innings !== cnInn.inningsNumber),
+          ...cnPerfs,
+        ];
+      }
+
+      if (cnData.fowByInnings?.[cnInn.inningsNumber]?.length) {
+        merged.fowByInnings![cnInn.inningsNumber] = cnData.fowByInnings[cnInn.inningsNumber];
+      }
+      if (cnData.oversByInnings?.[cnInn.inningsNumber]?.length) {
+        merged.oversByInnings![cnInn.inningsNumber] = cnData.oversByInnings[cnInn.inningsNumber];
+      }
+    }
+  }
+
+  if (cnData.status === "COMPLETED" || primaryData.status !== "LIVE") {
+    merged.status = cnData.status;
+    if (cnData.resultSummary) {
+      merged.resultSummary = cnData.resultSummary;
+    }
+  }
+  if (cnData.toss && !merged.toss) {
+    merged.toss = cnData.toss;
+  }
+
+  const activeInnNum = merged.currentInningsNumber || cnData.currentInningsNumber || 1;
+  const cnActiveInn = cnData.innings.find((i) => i.inningsNumber === activeInnNum);
+  const okActiveInn = primaryData.innings.find((i) => i.inningsNumber === activeInnNum);
+  if (
+    cnActiveInn &&
+    (!okActiveInn || cnActiveInn.balls >= okActiveInn.balls || cnActiveInn.status === "COMPLETED")
+  ) {
+    if (cnData.liveSummary?.currentBatters?.length) {
+      merged.liveSummary = cnData.liveSummary;
+    }
+    if (cnData.recentDeliveries?.length) {
+      merged.recentDeliveries = cnData.recentDeliveries;
+    }
+  }
+
+  return { data: merged, usedUrl: cnUsedUrl };
+}
+
+/**
  * Reconciles parsed CricNepal match data into the local database for a given match.
  *
  * CRITICAL REQUIREMENTS:
@@ -485,10 +864,24 @@ export async function applyCricNepalMatchToDb(
         data: matchUpdateData,
       });
 
-      // Clean up any corrupted player records (e.g. "Players 6756e7f8a2d3ajimmy" or Devanagari names)
-      const corruptedPlayers = [...match.homeTeam.players, ...match.awayTeam.players].filter(
-        (p) => /^Players\s+[0-9a-f]{6,}/i.test(p.displayName) || /[^\x00-\x7F]/.test(p.displayName)
-      );
+      // Clean up any corrupted player records (e.g. "Players 6756e7f8a2d3ajimmy", Devanagari names, or duplicate alias typos)
+      const allTeamPlayers = [...match.homeTeam.players, ...match.awayTeam.players];
+      const corruptedPlayers = allTeamPlayers.filter((p) => {
+        if (/^Players\s+[0-9a-f]{6,}/i.test(p.displayName) || /[^\x00-\x7F]/.test(p.displayName)) {
+          return true;
+        }
+        const canonical = cleanPlayerDisplayName(p.displayName);
+        if (canonical && canonical.toLowerCase() !== p.displayName.trim().toLowerCase()) {
+          const hasCanonicalOnTeam = allTeamPlayers.some(
+            (other) =>
+              other.id !== p.id &&
+              other.teamId === p.teamId &&
+              other.displayName.trim().toLowerCase() === canonical.toLowerCase()
+          );
+          if (hasCanonicalOnTeam) return true;
+        }
+        return false;
+      });
       if (corruptedPlayers.length > 0) {
         const corruptedIds = corruptedPlayers.map((p) => p.id);
         await tx.playerMatchStat.deleteMany({ where: { playerId: { in: corruptedIds } } });
@@ -632,8 +1025,9 @@ export async function applyCricNepalMatchToDb(
       // Shared player registry for auto-syncing missing players
       const homeTeamId = match.homeTeamId;
       const awayTeamId = match.awayTeamId;
+      const corruptedIdSet = new Set(corruptedPlayers.map((p) => p.id));
       const allPlayers = [...match.homeTeam.players, ...match.awayTeam.players].filter(
-        (p) => !/^Players\s+[0-9a-f]{6,}/i.test(p.displayName) && !/[^\x00-\x7F]/.test(p.displayName)
+        (p) => !corruptedIdSet.has(p.id) && !/^Players\s+[0-9a-f]{6,}/i.test(p.displayName) && !/[^\x00-\x7F]/.test(p.displayName)
       );
       const activeBattingTeamId = (data.currentInningsNumber === 2 && inn1BattingTeamId)
         ? (inn1BattingTeamId === homeTeamId ? awayTeamId : homeTeamId)
@@ -647,13 +1041,40 @@ export async function applyCricNepalMatchToDb(
       ) {
         const cleanName = cleanPlayerDisplayName(name || "").trim();
         if (!cleanName) return null;
-        let p = allPlayers.find(
-          (item) =>
-            item.displayName.trim().toLowerCase() === cleanName.toLowerCase() ||
-            item.displayName.toLowerCase().includes(cleanName.toLowerCase()) ||
-            cleanName.toLowerCase().includes(item.displayName.toLowerCase())
-        );
-        if (p) return p;
+        const lowerClean = cleanName.toLowerCase();
+
+        const scoreCandidate = (item: any) =>
+          (item.teamId === preferredTeamId ? 100 : 0) +
+          (item.isActive ? 10 : 0) +
+          (item.imageUrl ? 5 : 0);
+
+        const exactMatches = allPlayers
+          .filter(
+            (item) =>
+              item.displayName.trim().toLowerCase() === lowerClean ||
+              cleanPlayerDisplayName(item.displayName).toLowerCase() === lowerClean
+          )
+          .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+        if (exactMatches.length > 0) return exactMatches[0];
+
+        const fuzzyMatches = allPlayers
+          .filter(
+            (item) =>
+              item.teamId === preferredTeamId &&
+              (item.displayName.toLowerCase().includes(lowerClean) ||
+                lowerClean.includes(item.displayName.toLowerCase()))
+          )
+          .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+        if (fuzzyMatches.length > 0) return fuzzyMatches[0];
+
+        const crossTeamMatches = allPlayers
+          .filter(
+            (item) =>
+              item.displayName.toLowerCase().includes(lowerClean) ||
+              lowerClean.includes(item.displayName.toLowerCase())
+          )
+          .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+        if (crossTeamMatches.length > 0) return crossTeamMatches[0];
 
         const dbPlayer = await tx.player.findFirst({
           where: {

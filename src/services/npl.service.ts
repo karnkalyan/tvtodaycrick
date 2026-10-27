@@ -36,7 +36,12 @@ import { ensureIpv4Dispatcher } from "../lib/fetch-network";
 
 ensureIpv4Dispatcher();
 import { downloadTeamLogo, downloadPlayerImage } from "../lib/npl-asset-manager";
-import { fetchCricNepalLiveMatch, applyCricNepalMatchToDb } from "../lib/cricnepal-live";
+import {
+  fetchCricNepalLiveMatch,
+  applyCricNepalMatchToDb,
+  getCricNepalUrlsForMatch,
+  reconcileWithCricNepalScorecard,
+} from "../lib/cricnepal-live";
 import { fetchOnlineKhabarLiveMatch, getOnlineKhabarUrlForMatch } from "../lib/onlinekhabar-live";
 import type { NplSeason, NplTeam, NplPlayer, NplFixture } from "../types/npl";
 import type { BattingStyle, BowlingStyle, PlayerRole, Prisma } from "@prisma/client";
@@ -914,12 +919,9 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
     const preferredProvider = settings.provider;
 
     for (const m of candidateMatches) {
-      let cnUrl = "";
       let okUrl = "";
 
       if (m.notes) {
-        const cnMatch = m.notes.match(/Source:\s*(https?:\/\/[^\s]+cricnepal\.com\/match\/[^\s\r\n]+)/i);
-        if (cnMatch) cnUrl = cnMatch[1].trim();
         const okMatch = m.notes.match(/Source:\s*(https?:\/\/[^\s]+onlinekhabar\.com\/[^\s\r\n]+)/i);
         if (okMatch) okUrl = okMatch[1].trim();
       }
@@ -930,33 +932,36 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
         okUrl = season3OkUrl || okUrl;
       }
 
-      // CricNepal URL fallback
-      if (
-        !cnUrl &&
-        year === "2026" &&
-        (m.matchNumber === "Season3-M1" || m.matchNumber === "Match 1" || m.title.toLowerCase().includes("lumbini"))
-      ) {
-        cnUrl = "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
-      }
+      const cnCandidateUrls =
+        year === "2026"
+          ? getCricNepalUrlsForMatch({
+              matchNumber: m.matchNumber,
+              homeTeamName: m.homeTeam?.name,
+              awayTeamName: m.awayTeam?.name,
+              notes: m.notes,
+            })
+          : [];
+      const cnUrl = cnCandidateUrls[0] || "";
 
       let parsed: any = null;
 
       // Multi-provider live match resolution:
-      // Attempts preferred provider first, and falls back to alternate providers automatically
+      // Attempts preferred provider first, and reconciles with CricNepal's authoritative CN Engine scorecard
       if (preferredProvider === "onlinekhabar" && okUrl) {
         try {
           parsed = await fetchOnlineKhabarLiveMatch(okUrl);
         } catch {}
-        if (!parsed && cnUrl) {
-          try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
+        if (cnCandidateUrls.length > 0) {
+          const reconciled = await reconcileWithCricNepalScorecard(parsed, cnCandidateUrls);
+          parsed = reconciled.data;
         }
       } else if (preferredProvider === "nplt20league") {
-        // Prefer OnlineKhabar/CricNepal for full ball-by-ball and batter/bowler stats, falling back to NPLT20 snapshot
         if (okUrl) {
           try { parsed = await fetchOnlineKhabarLiveMatch(okUrl); } catch {}
         }
-        if (!parsed && cnUrl) {
-          try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
+        if (cnCandidateUrls.length > 0) {
+          const reconciled = await reconcileWithCricNepalScorecard(parsed, cnCandidateUrls);
+          parsed = reconciled.data;
         }
         if (!parsed) {
           try {
@@ -974,52 +979,16 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
           } catch {}
         }
       } else {
-        // Default (cricnepal): for Season3-M2+ where cnUrl is absent, use OnlineKhabar directly
-        if (cnUrl && !/^Season3-M(?:[2-9]|\d{2,})$/i.test(m.matchNumber || "")) {
-          try {
-            parsed = await fetchCricNepalLiveMatch(cnUrl);
-          } catch {}
-        }
-        if (!parsed && okUrl) {
+        // Default (cricnepal): fetch CricNepal authoritative scorecard, and cross-enrich/fallback with OnlineKhabar
+        if (okUrl) {
           try {
             parsed = await fetchOnlineKhabarLiveMatch(okUrl);
           } catch {}
         }
-      }
-
-      // Cross-enrich: If we have basic score from CricNepal or NPLT20, enrich with ball-by-ball,
-      // fall-of-wickets, live batters/bowler, and player scorecard from OnlineKhabar if available
-      if (parsed && okUrl && (!parsed.playerPerformances?.length || !parsed.fowByInnings)) {
-        try {
-          const okData = await fetchOnlineKhabarLiveMatch(okUrl);
-          if (okData) {
-            if (okData.innings?.length) {
-              parsed.innings = okData.innings;
-              parsed.currentInningsNumber = okData.currentInningsNumber;
-            }
-            if (okData.liveSummary?.currentBatters?.length || okData.liveSummary?.currentBowler) {
-              parsed.liveSummary = okData.liveSummary;
-            }
-            if (okData.toss && !parsed.toss) {
-              parsed.toss = okData.toss;
-            }
-            if (okData.playerPerformances?.length && !parsed.playerPerformances?.length) {
-              parsed.playerPerformances = okData.playerPerformances;
-            }
-            if (okData.fowByInnings && !parsed.fowByInnings) {
-              parsed.fowByInnings = okData.fowByInnings;
-            }
-            if (okData.oversByInnings && !parsed.oversByInnings) {
-              parsed.oversByInnings = okData.oversByInnings;
-            }
-            if (okData.recentDeliveries?.length && !parsed.recentDeliveries?.length) {
-              parsed.recentDeliveries = okData.recentDeliveries;
-            }
-            if (okData.resultSummary && !parsed.resultSummary) {
-              parsed.resultSummary = okData.resultSummary;
-            }
-          }
-        } catch {}
+        if (cnCandidateUrls.length > 0) {
+          const reconciled = await reconcileWithCricNepalScorecard(parsed, cnCandidateUrls);
+          parsed = reconciled.data;
+        }
       }
 
       // If still not parsed, try NPLT20 snapshot as universal fallback

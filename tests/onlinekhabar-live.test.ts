@@ -7,6 +7,10 @@ import {
   cleanPlayerDisplayName,
   parseOnlineKhabarData,
 } from "../src/lib/onlinekhabar-live";
+import {
+  getCricNepalUrlsForMatch,
+  parseCricNepalMatchHtml,
+} from "../src/lib/cricnepal-live";
 
 test("getOnlineKhabarUrlForMatch maps match numbers to onlinekhabar 314 + N match IDs", () => {
   assert.equal(getOnlineKhabarUrlForMatch("Match 1"), "https://www.onlinekhabar.com/cricket-match/315");
@@ -182,4 +186,117 @@ test("parseOnlineKhabarData resolves PHP uniqid player image hashes and sorts re
     ["1", "1", "1", "0", "1", "6"],
     "recentDeliveries should come from Ov 5, not Ov 1",
   );
+});
+
+test("getCricNepalUrlsForMatch and parseCricNepalMatchHtml extract authoritative CN Engine batting, bowling, FOW, and overs", () => {
+  const urls = getCricNepalUrlsForMatch({
+    matchNumber: "Season3-M3",
+    homeTeamName: "Karnali Yaks",
+    awayTeamName: "Janakpur Bolts",
+    notes: null,
+  });
+  assert.equal(
+    urls[0],
+    "https://www.cricnepal.com/match/karnali-yaks-vs-janakpur-bolts-match-3-nepal-premier-league-2026"
+  );
+
+  const payload = {
+    match: {
+      live_match_id: 3,
+      wp_match_post_id: 38005,
+      title: "Karnali Yaks vs Janakpur Bolts",
+      status: "completed",
+      current_innings_number: 2,
+      result_summary: "Karnali Yaks won by 19 runs",
+      team_a: { name: "Karnali Yaks", abbr: "KYA" },
+      team_b: { name: "Janakpur Bolts", abbr: "JBO" },
+    },
+    state: {
+      innings_number: 2,
+      current_run_rate: 5.79,
+    },
+    innings: [
+      {
+        innings_number: 1,
+        status: "completed",
+        batting_team: { name: "Karnali Yaks" },
+        bowling_team: { name: "Janakpur Bolts" },
+        score: { runs: 132, wickets: 9, overs: "20.0", legal_balls: 120 },
+        extras: { total: 11, wides: 8, no_balls: 0, byes: 1, leg_byes: 2, penalties: 0 },
+      },
+      {
+        innings_number: 2,
+        status: "completed",
+        batting_team: { name: "Janakpur Bolts" },
+        bowling_team: { name: "Karnali Yaks" },
+        score: { runs: 113, wickets: 10, overs: "19.3", legal_balls: 117 },
+        extras: { total: 6, wides: 5, no_balls: 0, byes: 0, leg_byes: 1, penalties: 0 },
+        target_runs: 133,
+      },
+    ],
+    live_summary: {
+      current_batters: [],
+      current_bowler: null,
+      batting_cards_by_innings: {
+        "2": [
+          {
+            name: "Harmeet Singh",
+            runs: 19,
+            balls: 13,
+            fours: 2,
+            sixes: 0,
+            strike_rate: 146.15,
+            is_striker: false,
+            is_non_striker: false,
+            dismissal_detail: "c & b Unish Singh",
+            status: "c & b Unish Singh",
+          },
+        ],
+      },
+      bowling_cards_by_innings: {
+        "2": [
+          {
+            name: "Hussain Talat",
+            overs: "4.0",
+            balls: 24,
+            maidens: 0,
+            runs: 26,
+            wickets: 3,
+            economy: 6.5,
+          },
+        ],
+      },
+      timeline_overs_by_innings: {
+        "2": [
+          {
+            over_number: 9,
+            display_over: 10,
+            runs: 2,
+            tokens: ["0", "W", "0", "1", "W", "1lb"],
+            summary_cards: [
+              {
+                kind: "wicket",
+                wicket_number: 5,
+                fow_runs: 57,
+                title: "Kusal Perera",
+                display_ball: "9.5",
+              },
+            ],
+          },
+        ],
+      },
+    },
+  };
+
+  const html = `<html><body><script>self.__next_f.push(${JSON.stringify([1, `0:${JSON.stringify(payload)}`])})</script></body></html>`;
+  const parsed = parseCricNepalMatchHtml(html, urls[0]);
+  assert.ok(parsed);
+  assert.equal(parsed?.innings[1].extras.total, 6);
+  assert.equal(parsed?.innings[1].extras.legByes, 1);
+  const harmeet = parsed?.playerPerformances?.find((p) => p.name === "Harmeet Singh");
+  assert.equal(harmeet?.batting?.runs, 19);
+  assert.equal(harmeet?.batting?.balls, 13);
+  assert.equal(harmeet?.batting?.dismissal, "c & b Unish Singh");
+  assert.deepEqual(parsed?.oversByInnings?.[2]?.[0]?.balls, ["0", "W", "0", "1", "W", "1LB"]);
+  assert.deepEqual(parsed?.fowByInnings?.[2]?.[0], ["57/5", "Kusal Perera", "9.5"]);
 });

@@ -62,7 +62,7 @@ const NEPALI_PLAYER_NAME_MAP: Record<string, string> = {
   "सोमपाल कामी": "Sompal Kami",
   "दीपेन्द्र सिंह ऐरी": "Dipendra Singh Airee",
   "करण केसी": "Karan KC",
-  "गुलशन झा": "Gulsan Jha",
+  "गुलशन झा": "Gulshan Jha",
   "भीम सार्की": "Bhim Sharki",
   "आरिफ शेख": "Aarif Sheikh",
   "अविनाश बोहरा": "Abinash Bohara",
@@ -95,6 +95,22 @@ const NEPALI_PLAYER_NAME_MAP: Record<string, string> = {
   "विलियम बोसिस्टो": "William Bosisto",
   "जीशान मकसूद": "Zeeshan Maqsood",
   "अर्जुन घर्ती": "Arjun Gharti",
+  "युनिश सिंह ठकुरी": "Unish Singh",
+  "अभिषेक तिवारी": "Abhishek Tiwari",
+  "आदित्य महता": "Aditya Mahat",
+  "तृत राज दास": "Trit Raj Das",
+  "कुसल परेरा": "Kusal Perera",
+  "अकबर अली": "Akbar Ali",
+};
+
+const PLAYER_ALIAS_MAP: Record<string, string> = {
+  "gulsan jha": "Gulshan Jha",
+  "unish birkam singh": "Unish Singh",
+  "unish bikram singh": "Unish Singh",
+  "unish singh thakuri": "Unish Singh",
+  "anil kumar sah": "Anil Sah",
+  "aaditya mahata": "Aditya Mahat",
+  "akbar ali": "Akbar Ali",
 };
 
 const IMAGE_NICKNAME_MAP: Record<string, string> = {
@@ -118,6 +134,11 @@ const IMAGE_NICKNAME_MAP: Record<string, string> = {
   rohit: "Rohit Paudel",
   aasif: "Aasif Sheikh",
   anil: "Anil Sah",
+  "anil-kumar-sah": "Anil Sah",
+  "aaditya-mahata": "Aditya Mahat",
+  "gulsan-jha": "Gulshan Jha",
+  "unish-birkam-singh": "Unish Singh",
+  "unish-bikram-singh": "Unish Singh",
   pawan: "Pawan Sarraf",
   watt: "Mark Watt",
   deepak: "Deepak Dumre",
@@ -129,13 +150,18 @@ export function cleanPlayerDisplayName(raw: string): string {
   if (NEPALI_PLAYER_NAME_MAP[trimmed]) {
     return NEPALI_PLAYER_NAME_MAP[trimmed];
   }
+  const aliasMatch = PLAYER_ALIAS_MAP[trimmed.toLowerCase()];
+  if (aliasMatch) {
+    return aliasMatch;
+  }
   const strippedHash = trimmed.replace(/^(?:players?[-_\s]+)?[0-9a-f]{10,16}[-_\s]*/i, "").trim();
   const lowerKey = strippedHash.toLowerCase().replace(/\s+/g, "-");
   if (IMAGE_NICKNAME_MAP[lowerKey]) {
     return IMAGE_NICKNAME_MAP[lowerKey];
   }
   if (strippedHash && strippedHash !== trimmed) {
-    return slugToPlayerOrTeamName(lowerKey);
+    const resolved = slugToPlayerOrTeamName(lowerKey);
+    return PLAYER_ALIAS_MAP[resolved.toLowerCase()] || resolved;
   }
   return trimmed;
 }
@@ -149,7 +175,7 @@ export function slugToPlayerOrTeamName(slug: string): string {
   if (IMAGE_NICKNAME_MAP[clean.toLowerCase()]) {
     return IMAGE_NICKNAME_MAP[clean.toLowerCase()];
   }
-  return clean
+  const formatted = clean
     .split("-")
     .map((w) => {
       const lower = w.toLowerCase();
@@ -157,6 +183,7 @@ export function slugToPlayerOrTeamName(slug: string): string {
       return w.charAt(0).toUpperCase() + w.slice(1);
     })
     .join(" ");
+  return PLAYER_ALIAS_MAP[formatted.toLowerCase()] || formatted;
 }
 
 function extractNameFromImageFile(imageFile: string): string {

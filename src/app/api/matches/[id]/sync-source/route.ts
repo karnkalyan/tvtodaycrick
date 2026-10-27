@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { fetchCricNepalLiveMatch, applyCricNepalMatchToDb } from "@/lib/cricnepal-live";
+import {
+  fetchCricNepalLiveMatch,
+  applyCricNepalMatchToDb,
+  getCricNepalUrlsForMatch,
+  reconcileWithCricNepalScorecard,
+} from "@/lib/cricnepal-live";
 import { fetchOnlineKhabarLiveMatch, getOnlineKhabarUrlForMatch } from "@/lib/onlinekhabar-live";
 import { ok } from "@/lib/api-response";
 import { handleApiError } from "@/lib/errors";
@@ -52,33 +57,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!explicitSourceUrl && isSeasonThreeFixture && okFallbackUrl) {
       sourceUrl = okFallbackUrl;
     }
-    let cnFallbackUrl = "";
-    if (
-      (match.title.toLowerCase().includes("lumbini") && match.title.toLowerCase().includes("sudurpaschim")) ||
-      match.matchNumber === "Season3-M1" ||
-      match.matchNumber === "Match 1" ||
-      ordinal === 1
-    ) {
-      cnFallbackUrl =
-        "https://www.cricnepal.com/match/lumbini-lions-vs-sudurpaschim-royals-match-1-nepal-premier-league-2026";
-    }
+    const cnCandidateUrls = getCricNepalUrlsForMatch({
+      matchNumber: match.matchNumber,
+      homeTeamName: match.homeTeam?.name,
+      awayTeamName: match.awayTeam?.name,
+      notes: match.notes,
+    });
+    const cnFallbackUrl = cnCandidateUrls[0] || "";
 
     let parsedData: any = null;
     let usedUrl = sourceUrl || cnFallbackUrl || okFallbackUrl;
 
     if (sourceUrl.includes("onlinekhabar.com")) {
-      parsedData = await fetchOnlineKhabarLiveMatch(sourceUrl);
+      try {
+        parsedData = await fetchOnlineKhabarLiveMatch(sourceUrl);
+      } catch {
+        // fallback to CricNepal below
+      }
+      if (cnCandidateUrls.length > 0) {
+        const reconciled = await reconcileWithCricNepalScorecard(parsedData, cnCandidateUrls);
+        parsedData = reconciled.data;
+        if (reconciled.usedUrl) usedUrl = reconciled.usedUrl;
+      }
     } else if (sourceUrl.includes("cricnepal.com")) {
       parsedData = await fetchCricNepalLiveMatch(sourceUrl);
     } else {
       // Try CricNepal first, fallback to OnlineKhabar
-      if (cnFallbackUrl) {
-        try {
-          parsedData = await fetchCricNepalLiveMatch(cnFallbackUrl);
-          usedUrl = cnFallbackUrl;
-        } catch {
-          // fallback
-        }
+      if (cnCandidateUrls.length > 0) {
+        const reconciled = await reconcileWithCricNepalScorecard(null, cnCandidateUrls);
+        parsedData = reconciled.data;
+        if (reconciled.usedUrl) usedUrl = reconciled.usedUrl;
       }
       if (!parsedData && okFallbackUrl) {
         try {
