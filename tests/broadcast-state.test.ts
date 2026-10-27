@@ -79,6 +79,19 @@ test("broadcast match feed exposes innings team assignments and real zero-over s
   assert.doesNotMatch(route, /inn1\.balls > 0[\s\S]{0,120}'20\.0'/);
 });
 
+test("graphics controller and score entry share one pinned default match", () => {
+  const controller = readFileSync(new URL("../src/app/(dashboard)/broadcast/page.tsx", import.meta.url), "utf8");
+  const scoreEntry = readFileSync(new URL("../src/app/(dashboard)/score-entry/page.tsx", import.meta.url), "utf8");
+
+  assert.match(controller, /readSelectedMatchId\(\)/);
+  assert.match(controller, /handleSelectFixture\(defaultMatch\.id, matches, teams, false\)/);
+  assert.match(controller, /selectedMatchId\s*\?\s*\(dbData\.matches \|\| \[\]\)\.find/);
+  assert.doesNotMatch(controller, /find\(\(x: any\) => x\.id === selectedMatchId\) \|\| dbData\.matches\?\.\[0\]/);
+  assert.match(scoreEntry, /defaultMatchId = readSelectedMatchId\(\)/);
+  assert.match(scoreEntry, /writeSelectedMatchId\(m\.id\)/);
+  assert.match(scoreEntry, /matchId: sourceMatch\.id/);
+});
+
 test("clean reset wipes lingering match runs and displays NPL logo without audio gate", () => {
   const outputCode = readFileSync(new URL("../src/app/kashtrix/output/kashtrix-output.tsx", import.meta.url), "utf8");
   const appJs = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
@@ -157,6 +170,7 @@ test("buildBroadcastStateFromMatch accurately reflects completed match score, FO
   const liveObj = state.live as any;
   const fow = state.fow as any[];
 
+  assert.equal(matchObj.matchId, 85);
   assert.equal(matchObj.teamA, "LUL");
   assert.equal(matchObj.teamB, "SPR");
   assert.equal(scoreObj.runs, 88);
@@ -233,7 +247,5 @@ test("graphics templates and app.js include bowler no-balls and wides bindings",
   assert.match(appJs, /anchorMasterBowlerNoBalls:\s*bNoBalls/);
   assert.match(appJs, /anchorMasterBowlerWides:\s*bWides/);
 });
-
-
 
 

@@ -41,6 +41,7 @@ import {
   type ExtraCategory,
 } from "@/lib/score-events";
 import { getFranchiseBrand } from "@/lib/npl-franchises";
+import { readSelectedMatchId, writeSelectedMatchId } from "@/lib/selected-match";
 import type { Match, Player, PlayerStat } from "@/types/models";
 
 type InnForm = {
@@ -271,9 +272,22 @@ export default function ScoreEntryPage() {
       setMatches(result.items);
       setPages(result.totalPages);
 
-      // Auto-select first match if none selected
+      // Restore the shared controller/score-entry match. Only use the first
+      // fixture when no valid default has ever been selected.
       if (!selectedId && result.items.length > 0) {
-        setSelectedId(result.items[0].id);
+        let defaultMatchId = readSelectedMatchId();
+        if (!defaultMatchId) {
+          try {
+            const broadcast = await api<any>("/api/broadcast/state");
+            const broadcastMatchId = Number(broadcast?.state?.match?.matchId);
+            defaultMatchId = Number.isInteger(broadcastMatchId) && broadcastMatchId > 0
+              ? broadcastMatchId
+              : null;
+          } catch {}
+        }
+        const defaultMatch = result.items.find((item) => item.id === defaultMatchId) || result.items[0];
+        writeSelectedMatchId(defaultMatch.id);
+        setSelectedId(defaultMatch.id);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load matches");
@@ -546,6 +560,7 @@ export default function ScoreEntryPage() {
 
     const payload = {
       match: {
+        matchId: sourceMatch.id,
         teamA: battingBrand.code,
         teamB: bowlingBrand.code,
         teamAName: battingTeam.name,
@@ -1352,7 +1367,10 @@ export default function ScoreEntryPage() {
                   key={m.id}
                   type="button"
                   className={`match-pick ${selectedId === m.id ? "active" : ""}`}
-                  onClick={() => setSelectedId(m.id)}
+                  onClick={() => {
+                    writeSelectedMatchId(m.id);
+                    setSelectedId(m.id);
+                  }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <strong style={{ fontSize: "11px", letterSpacing: "1px", color: "var(--muted)" }}>

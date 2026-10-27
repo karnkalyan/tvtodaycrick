@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/common";
 import { NPL_FRANCHISE_BRANDS } from "@/lib/npl-franchises";
+import { readSelectedMatchId, writeSelectedMatchId } from "@/lib/selected-match";
 
 const CHANNEL_NAME = "npl-gfx-v8-cues";
 const STORAGE_KEY = "npl-gfx-v8-state";
@@ -104,6 +105,14 @@ export default function BroadcastControllerPage() {
   // Helper to apply incoming database or socket state
   const applyState = (saved: any) => {
     if (!saved) return;
+    if (Number(saved.match?.matchId) > 0) {
+      setSelectedMatchId((current) => {
+        if (current) return current;
+        const restored = Number(saved.match.matchId);
+        writeSelectedMatchId(restored);
+        return restored;
+      });
+    }
     if (saved.match?.teamA) setTeamA(normalizeCode(saved.match.teamA));
     if (saved.match?.teamB) setTeamB(normalizeCode(saved.match.teamB));
     if (typeof saved.score?.runs === "number") setRuns(saved.score.runs);
@@ -129,25 +138,6 @@ export default function BroadcastControllerPage() {
       setActiveGraphic(restoredGraphic || null);
     }
   };
-
-  // Fetch NPL Database matches and teams with player rosters & photos
-  useEffect(() => {
-    fetch("/api/broadcast/npl-data")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.matches?.length) {
-          setNplMatches(data.matches);
-          const teamsList = data.teams || [];
-          setNplTeams(teamsList);
-          // Do not publish a fixture preset on boot. Score Entry owns the live
-          // batting order and the persisted broadcast state restores it below.
-          // A director can still explicitly select a fixture when required.
-        } else if (data?.teams) {
-          setNplTeams(data.teams);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   // Helper to retrieve roster players from NPL Database with fallback to static roster
   const getTeamRoster = (teamCode: string) => {
@@ -562,8 +552,14 @@ export default function BroadcastControllerPage() {
     return { battingCode: homeCode, bowlingCode: awayCode };
   };
 
-  const handleSelectFixture = (matchId: number, overrideMatches?: any[], overrideTeams?: any[]) => {
+  const handleSelectFixture = (
+    matchId: number,
+    overrideMatches?: any[],
+    overrideTeams?: any[],
+    publish = true,
+  ) => {
     setSelectedMatchId(matchId);
+    writeSelectedMatchId(matchId);
     const matchesList = overrideMatches || nplMatches;
     const teamsList = overrideTeams || nplTeams;
     const m = matchesList.find((x) => x.id === matchId);
@@ -711,35 +707,64 @@ export default function BroadcastControllerPage() {
     setInnings(innText);
     setRequirement(reqText);
 
-    sendCue("updateData", {
-      match: { teamA: battingCode, teamB: bowlingCode },
-      score: { runs: initRuns, wickets: initWickets, overs: initOvers },
-      live: {
-        venue: m.venue || "TU Cricket Ground, Kirtipur",
-        matchLabel: mLabel,
-        requirement: reqText,
-        strikerName: sName,
-        strikerRuns: sRuns,
-        strikerBalls: sBalls,
-        nonStrikerName: nsName,
-        nonStrikerRuns: nsRuns,
-        nonStrikerBalls: nsBalls,
-        bowlerName: bName,
-        bowlerFigures: bFigs,
-        bowlerOvers: bOvs,
-        rateText: crrText,
-        innings: innText,
-        tossText: tossMsg,
-        target: initTarget,
-      },
-      fow: matchFow,
-    });
+    if (publish) {
+      sendCue("updateData", {
+        match: { matchId: m.id, teamA: battingCode, teamB: bowlingCode },
+        score: { runs: initRuns, wickets: initWickets, overs: initOvers },
+        live: {
+          venue: m.venue || "TU Cricket Ground, Kirtipur",
+          matchLabel: mLabel,
+          requirement: reqText,
+          strikerName: sName,
+          strikerRuns: sRuns,
+          strikerBalls: sBalls,
+          nonStrikerName: nsName,
+          nonStrikerRuns: nsRuns,
+          nonStrikerBalls: nsBalls,
+          bowlerName: bName,
+          bowlerFigures: bFigs,
+          bowlerOvers: bOvs,
+          rateText: crrText,
+          innings: innText,
+          tossText: tossMsg,
+          target: initTarget,
+        },
+        fow: matchFow,
+      });
+    }
 
     setAutoLogs((prev) => [
       `[${new Date().toLocaleTimeString()}] Match Selected: ${m.matchNumber || `M${m.id}`} · ${m.name} (${m.status}: ${initRuns}/${initWickets} in ${initOvers} ov)`,
       ...prev.slice(0, 15),
     ]);
   };
+
+  // Load one shared default fixture for both Score Entry and Graphics Control.
+  // Subsequent data refreshes update this fixture without replacing it.
+  useEffect(() => {
+    async function loadDefaultFixture() {
+      try {
+        const [dataRes, stateRes] = await Promise.all([
+          fetch("/api/broadcast/npl-data", { cache: "no-store" }),
+          fetch("/api/broadcast/state", { cache: "no-store" }),
+        ]);
+        const data = dataRes.ok ? await dataRes.json() : null;
+        const broadcast = stateRes.ok ? await stateRes.json() : null;
+        const matches = data?.matches || [];
+        const teams = data?.teams || [];
+        setNplMatches(matches);
+        setNplTeams(teams);
+        if (!matches.length) return;
+
+        const serverMatchId = Number(broadcast?.state?.match?.matchId);
+        const preferredMatchId = readSelectedMatchId()
+          || (Number.isInteger(serverMatchId) && serverMatchId > 0 ? serverMatchId : null);
+        const defaultMatch = matches.find((item: any) => item.id === preferredMatchId) || matches[0];
+        handleSelectFixture(defaultMatch.id, matches, teams, false);
+      } catch {}
+    }
+    void loadDefaultFixture();
+  }, []);
 
   // Previous live score tracker for authentic boundary / wicket stinger detection
   const prevLiveScoreRef = useRef<{ runs: number; wickets: number; strikerRuns: number } | null>(null);
@@ -749,9 +774,10 @@ export default function BroadcastControllerPage() {
   const syncAutoFeed = async () => {
     setLiveSyncing(true);
     try {
-      // 1. Check live stream endpoint for external live broadcast
-      const liveRes = await fetch("/api/npl/live");
-      if (liveRes.ok) {
+      // Only use the generic external live match when no fixture is selected.
+      // Once selected, the database branch below remains pinned to that match.
+      const liveRes = selectedMatchId ? null : await fetch("/api/npl/live");
+      if (liveRes?.ok) {
         const liveJson = await liveRes.json();
         const liveM = liveJson?.data?.matches?.[0] || liveJson?.matches?.[0];
         if (liveM && (liveM.homeScore !== undefined || liveM.live)) {
@@ -815,7 +841,9 @@ export default function BroadcastControllerPage() {
       const dbRes = await fetch("/api/broadcast/npl-data");
       if (dbRes.ok) {
         const dbData = await dbRes.json();
-        const curM = (dbData.matches || []).find((x: any) => x.id === selectedMatchId) || dbData.matches?.[0];
+        const curM = selectedMatchId
+          ? (dbData.matches || []).find((x: any) => x.id === selectedMatchId)
+          : dbData.matches?.[0];
         if (curM) {
           const { battingCode, bowlingCode } = resolveBattingAndBowlingTeams(curM);
           const activeInningsData = Number(curM.activeInningsNumber) === 2 ? curM.inn2Data : curM.inn1Data;

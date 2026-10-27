@@ -26,6 +26,7 @@ export function mergeBroadcastState(current: unknown, incoming: unknown): Broadc
 
 export const DEFAULT_BROADCAST_STATE: BroadcastState = {
   match: {
+    matchId: null,
     teamA: "LUL",
     teamB: "SPR",
     teamAName: "Lumbini Lions",
@@ -305,6 +306,7 @@ export function buildBroadcastStateFromMatch(
 
   return {
     match: {
+      matchId: match.id,
       teamA: battingBrand.code,
       teamB: bowlingBrand.code,
       teamAName: battingTeam.name,
@@ -389,4 +391,3 @@ export async function syncMatchToBroadcastDb(
   } catch {}
   return payload;
 }
-
