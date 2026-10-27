@@ -92,11 +92,12 @@ async function boot() {
     }
 
     // 3. Start Broadcast WebSocket Server on port 3212
-    console.log("\n[3/4] Launching WebSocket broadcast engine on port " + (process.env.WS_PORT || 3212) + "...");
+    const wsPort = process.env.WS_PORT || "3212";
+    console.log("\n[3/4] Launching WebSocket broadcast engine on port " + wsPort + "...");
     const wsProcess = spawn("npx", ["tsx", "src/server/ws-server.ts"], {
       stdio: "inherit",
       shell: true,
-      env: { ...process.env, PORT: process.env.WS_PORT || "3212" },
+      env: { ...process.env, WS_PORT: wsPort, PORT: wsPort },
     });
 
     // 4. Start Next.js Production Web Server on port 3211

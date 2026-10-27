@@ -4,6 +4,7 @@ import { prisma } from "./prisma";
 import { fetchSource } from "./npl-source";
 import type { Prisma } from "@prisma/client";
 import { syncMatchToBroadcastDb } from "./broadcast-state";
+import { cleanPlayerDisplayName } from "./onlinekhabar-live";
 
 import { ensureIpv4Dispatcher } from "./fetch-network";
 ensureIpv4Dispatcher();
@@ -440,8 +441,9 @@ export async function fetchCricNepalLiveMatch(matchUrl: string): Promise<CricNep
 export async function applyCricNepalMatchToDb(
   matchId: number,
   data: CricNepalParsedLiveMatch,
-  options: { forceOverwrite?: boolean } = {}
+  options: { forceOverwrite?: boolean; syncBroadcast?: boolean; forceBroadcast?: boolean } = {}
 ) {
+  let didSyncBroadcast = false;
   const updated = await prisma.$transaction(
     async (tx) => {
       const match = await tx.match.findUnique({
@@ -483,10 +485,19 @@ export async function applyCricNepalMatchToDb(
         data: matchUpdateData,
       });
 
-      // An authoritative refresh must not retain player rows imported from a
-      // previously selected/source-mismatched match. Those rows otherwise leak
-      // into every batting, bowling, partnership, and master graphic.
-      if (options.forceOverwrite) {
+      // Clean up any corrupted player records (e.g. "Players 6756e7f8a2d3ajimmy" or Devanagari names)
+      const corruptedPlayers = [...match.homeTeam.players, ...match.awayTeam.players].filter(
+        (p) => /^Players\s+[0-9a-f]{6,}/i.test(p.displayName) || /[^\x00-\x7F]/.test(p.displayName)
+      );
+      if (corruptedPlayers.length > 0) {
+        const corruptedIds = corruptedPlayers.map((p) => p.id);
+        await tx.playerMatchStat.deleteMany({ where: { playerId: { in: corruptedIds } } });
+        await tx.player.deleteMany({ where: { id: { in: corruptedIds } } }).catch(() => {});
+      }
+
+      // An authoritative refresh or full scorecard sync must not retain player rows
+      // imported from a previously selected/source-mismatched match or default manual selection.
+      if (options.forceOverwrite || (Array.isArray(data.playerPerformances) && data.playerPerformances.length > 0)) {
         await tx.playerMatchStat.deleteMany({ where: { matchId: match.id } });
       }
 
@@ -531,8 +542,26 @@ export async function applyCricNepalMatchToDb(
       }
 
       // 3. Reconcile Innings
+      const hasStartedInnings2 = data.innings.some(
+        (i) => i.inningsNumber === 2 && (i.balls > 0 || i.runs > 0 || i.wickets > 0)
+      );
+      if (data.currentInningsNumber === 1 && !hasStartedInnings2) {
+        await tx.matchInnings.deleteMany({
+          where: {
+            matchId: match.id,
+            inningsNumber: 2,
+            runs: 0,
+            balls: 0,
+            wickets: 0,
+          },
+        });
+      }
+
       let inn1BattingTeamId: number | null = null;
       for (const inn of data.innings) {
+        if (inn.inningsNumber === 2 && inn.status === "NOT_STARTED" && inn.balls === 0 && inn.runs === 0 && inn.wickets === 0) {
+          continue;
+        }
         // Find batting team ID
         let battingTeamId = match.homeTeamId;
         const bName = (inn.battingTeamName || "").toLowerCase();
@@ -603,7 +632,9 @@ export async function applyCricNepalMatchToDb(
       // Shared player registry for auto-syncing missing players
       const homeTeamId = match.homeTeamId;
       const awayTeamId = match.awayTeamId;
-      const allPlayers = [...match.homeTeam.players, ...match.awayTeam.players];
+      const allPlayers = [...match.homeTeam.players, ...match.awayTeam.players].filter(
+        (p) => !/^Players\s+[0-9a-f]{6,}/i.test(p.displayName) && !/[^\x00-\x7F]/.test(p.displayName)
+      );
       const activeBattingTeamId = (data.currentInningsNumber === 2 && inn1BattingTeamId)
         ? (inn1BattingTeamId === homeTeamId ? awayTeamId : homeTeamId)
         : (inn1BattingTeamId || homeTeamId);
@@ -614,8 +645,8 @@ export async function applyCricNepalMatchToDb(
         preferredTeamId: number,
         role: "BATSMAN" | "BOWLER" | "ALL_ROUNDER" | "WICKET_KEEPER" = "BATSMAN"
       ) {
-        if (!name || !name.trim()) return null;
-        const cleanName = name.trim();
+        const cleanName = cleanPlayerDisplayName(name || "").trim();
+        if (!cleanName) return null;
         let p = allPlayers.find(
           (item) =>
             item.displayName.trim().toLowerCase() === cleanName.toLowerCase() ||
@@ -911,9 +942,19 @@ export async function applyCricNepalMatchToDb(
         },
       });
 
-      if (refreshed) {
+      if (refreshed && options.syncBroadcast !== false) {
         try {
-          await syncMatchToBroadcastDb(tx, refreshed, data);
+          const existingBs = await (tx as any).broadcastState.findUnique({ where: { id: "current" } });
+          const activeMatchId = (existingBs?.state as any)?.match?.matchId;
+          const shouldSync =
+            options.forceBroadcast === true ||
+            !activeMatchId ||
+            Number(activeMatchId) === Number(match.id) ||
+            data.status === "LIVE";
+          if (shouldSync) {
+            await syncMatchToBroadcastDb(tx, refreshed, data);
+            didSyncBroadcast = true;
+          }
         } catch (bsErr) {
           console.warn("[BroadcastState] Could not auto-sync broadcast state:", bsErr);
         }
@@ -925,7 +966,7 @@ export async function applyCricNepalMatchToDb(
   );
 
   // Broadcast WebSocket notification to all active graphics screens
-  if (updated) {
+  if (updated && didSyncBroadcast) {
     try {
       if (typeof (global as any).__npl_ws_broadcast === "function") {
         const stateRecord = await (prisma as any).broadcastState.findUnique({ where: { id: "current" } });

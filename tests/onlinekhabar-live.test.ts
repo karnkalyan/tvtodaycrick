@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import {
   getOnlineKhabarUrlForMatch,
   slugToPlayerOrTeamName,
+  cleanPlayerDisplayName,
   parseOnlineKhabarData,
 } from "../src/lib/onlinekhabar-live";
 
@@ -123,4 +124,62 @@ test("parseOnlineKhabarData parses toss, innings, extras and player performances
   assert.ok(kishore, "Kishore Mahato should be parsed");
   assert.equal(kishore?.bowling?.wickets, 4);
   assert.equal(kishore?.bowling?.runs, 23);
+});
+
+test("parseOnlineKhabarData resolves PHP uniqid player image hashes and sorts reverse overs chronologically", () => {
+  assert.equal(cleanPlayerDisplayName("Players 6756e7f8a2d3ajimmy"), "James Neesham");
+  assert.equal(cleanPlayerDisplayName("जिमी नीशम"), "James Neesham");
+  assert.equal(cleanPlayerDisplayName("हर्मीत सिंह"), "Harmeet Singh");
+  assert.equal(cleanPlayerDisplayName("दिपक डुम्रे"), "Deepak Dumre");
+
+  const score = `<section class="npl-score" data-match-state="live">
+    <div class="npl-team"><a class="npl-team-link" href="/cricket-team/karnali-yaks-2026/"></a><p class="npl-team__score">37/2 5 overs</p></div>
+    <p class="npl-score__innings">1st Innings</p>
+    <div class="npl-team"><a class="npl-team-link" href="/cricket-team/janakpur-bolts-2026/"></a><p class="npl-team__score">0/0 0 overs</p></div>
+    <div class="npl-score__live">
+      <div class="npl-score__group">
+        <span class="npl-score__player"><span class="npl-icon-bat"></span><a class="npl-player-link" href="/cricket-player/ariful-islam">Ariful Islam</a> 19(8b)</span>
+        <span class="npl-score__player"><a class="npl-player-link" href="/cricket-player/hussain-talat">Hussain Talat</a> 3(10b)</span>
+      </div>
+      <div class="npl-score__group npl-score__group--over">
+        <span class="npl-score__player"><span class="npl-icon-ball"></span><a class="npl-player-link" href="/cricket-player/295">जिमी नीशम</a> 0/8 (1.2)</span>
+      </div>
+    </div>
+  </section>`;
+
+  const bowling1 = `<table><tbody><tr>
+    <td><img src="https://www.onlinekhabar.com/wp-content/uploads/2024/12/players-6756e7f8a2d3ajimmy.jpg"><span class="npl-sc-player__name"><a class="npl-player-link" href="/cricket-player/295">जिमी नीशम</a></span></td>
+    <td>1.2</td><td>0</td><td>8</td><td>0</td><td>6.00</td>
+  </tr></tbody></table>`;
+
+  // OnlineKhabar lists newest overs first (Ov 5 down to Ov 1)
+  const overs1 = `<table class="npl-sc-table--overs"><tbody>
+    <tr><td class="npl-overs__no">Ov 5</td><td class="npl-overs__score">37/2</td><td><ul class="npl-overs__balls"><li>1</li><li>1</li><li>1</li><li>0</li><li>1</li><li>6</li></ul></td></tr>
+    <tr><td class="npl-overs__no">Ov 1</td><td class="npl-overs__score">4/1</td><td><ul class="npl-overs__balls"><li>0</li><li>0</li><li>1</li><li>3</li><li>0</li><li>W</li></ul></td></tr>
+  </tbody></table>`;
+
+  const parsed = parseOnlineKhabarData({
+    match_id: 317,
+    current: 1,
+    state: "live",
+    regions: {
+      score: { html: score },
+      "batting-1": { html: "<table><tbody></tbody></table><p>Total: 37/2 (5 overs)</p>" },
+      "bowling-1": { html: bowling1 },
+      "overs-1": { html: overs1 },
+    },
+  });
+
+  assert.equal(parsed.liveSummary?.currentBowler?.name, "James Neesham");
+  assert.equal(parsed.playerPerformances?.[0]?.name, "James Neesham");
+  assert.deepEqual(
+    parsed.oversByInnings?.["1"]?.map((o) => o.overNo),
+    ["Ov 1", "Ov 5"],
+    "overs should be sorted in ascending order (Ov 1 -> Ov 5)",
+  );
+  assert.deepEqual(
+    parsed.recentDeliveries,
+    ["1", "1", "1", "0", "1", "6"],
+    "recentDeliveries should come from Ov 5, not Ov 1",
+  );
 });

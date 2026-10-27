@@ -272,3 +272,33 @@ test("every data-backed graphic receives canonical arrays and full current-over 
   assert.match(page, /id="partnershipStriker"/);
   assert.match(page, /id="resultAScore"/);
 });
+
+test("nplt20 and onlinekhabar parsers do not fabricate 2nd innings 0/0 chase during 1st innings", async () => {
+  const { convertNplT20LiveMatchToParsed } = await import("../src/lib/nplt20-api");
+
+  const parsed = convertNplT20LiveMatchToParsed({
+    ourMatchId: "Season3-M3",
+    status: "live",
+    team1: { name: "Karnali Yaks", short: "KAY", score: "19/2", overs: "4.2" },
+    team2: { name: "Janakpur Bolts", short: "JAB", score: "0/0", overs: "0.0" },
+    commentary: [
+      { over: "2.4", text: "Rahul Yadav to Hussain Talat: no run" },
+      { over: "2.3", text: "Rahul Yadav to Deepak Dumre: 1 run" },
+    ],
+  });
+
+  assert.equal(parsed.currentInningsNumber, 1);
+  assert.equal(parsed.innings.length, 1);
+  assert.equal(parsed.innings[0].battingTeamName, "Karnali Yaks");
+  assert.equal(parsed.innings[0].runs, 19);
+  assert.equal(parsed.innings[0].wickets, 2);
+  assert.equal(parsed.innings[0].status, "LIVE");
+});
+
+test("output graphics rely on WebSocket events when connected and skip active HTTP polling", () => {
+  const appJs = readFileSync(new URL("../public/broadcast/app.js", import.meta.url), "utf8");
+  const kashtrixOutput = readFileSync(new URL("../src/app/kashtrix/output/kashtrix-output.tsx", import.meta.url), "utf8");
+
+  assert.match(appJs, /if \(!force && broadcastWs && broadcastWs\.readyState === WebSocket\.OPEN\) return;/);
+  assert.match(kashtrixOutput, /if \(connectedRef\.current\) return;/);
+});

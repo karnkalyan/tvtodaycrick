@@ -99,7 +99,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Apply to database without touching asset images or deleting history
     const forceOverwrite = body?.forceOverwrite === true;
-    const updatedMatch = await applyCricNepalMatchToDb(matchId, parsedData, { forceOverwrite });
+    const updatedMatch = await applyCricNepalMatchToDb(matchId, parsedData, {
+      forceOverwrite,
+      forceBroadcast: true,
+    });
     const broadcastRecord = await (prisma as any).broadcastState.findUnique({
       where: { id: "current" },
     });

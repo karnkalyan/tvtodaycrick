@@ -468,7 +468,7 @@ export function convertNplT20LiveMatchToParsed(liveMatch: any): CricNepalParsedL
     });
   }
 
-  if (innings2Balls > 0 || innings2Score.runs > 0 || innings2Score.wickets > 0 || (innings.length > 0 && innings1Score.runs > 0)) {
+  if (innings2Balls > 0 || innings2Score.runs > 0 || innings2Score.wickets > 0) {
     currentInningsNumber = 2;
     const target = innings1Score.runs > 0 ? innings1Score.runs + 1 : null;
     innings.push({
@@ -488,36 +488,29 @@ export function convertNplT20LiveMatchToParsed(liveMatch: any): CricNepalParsedL
   const currentBatters: NonNullable<CricNepalParsedLiveMatch["liveSummary"]>["currentBatters"] = [];
   let currentBowler: NonNullable<CricNepalParsedLiveMatch["liveSummary"]>["currentBowler"] = null;
 
-  if (hasCommentary && liveMatch.commentary.length > 0) {
-    for (const c of liveMatch.commentary) {
-      const clean = (c.text || "").replace(/<[^>]+>/g, "").trim();
-      const m = clean.match(/^([A-Za-z\s.'-]+)\s+to\s+([A-Za-z\s.'-]+):/);
-      if (m) {
-        const bowlerName = m[1].trim();
-        const batterName = m[2].trim();
-        if (!currentBowler) {
-          currentBowler = {
-            name: bowlerName,
-            overs: c.over || "0.0",
-            runs: 0,
-            wickets: 0,
-            economy: 0,
-          };
-        }
-        if (!currentBatters.some((b) => b.name.toLowerCase() === batterName.toLowerCase())) {
-          currentBatters.push({
-            name: batterName,
-            runs: 0,
-            balls: 0,
-            fours: 0,
-            sixes: 0,
-            strikeRate: 0,
-            isStriker: currentBatters.length === 0,
-          });
-          if (currentBatters.length >= 2) break;
-        }
+  if (Array.isArray(liveMatch.batters) && liveMatch.batters.length > 0) {
+    for (const b of liveMatch.batters.slice(0, 2)) {
+      if (b?.name) {
+        currentBatters.push({
+          name: String(b.name).trim(),
+          runs: Number(b.runs) || 0,
+          balls: Number(b.balls) || 0,
+          fours: Number(b.fours) || 0,
+          sixes: Number(b.sixes) || 0,
+          strikeRate: Number(b.strikeRate) || 0,
+          isStriker: Boolean(b.isStriker ?? currentBatters.length === 0),
+        });
       }
     }
+  }
+  if (liveMatch.bowler?.name) {
+    currentBowler = {
+      name: String(liveMatch.bowler.name).trim(),
+      overs: String(liveMatch.bowler.overs || "0.0"),
+      runs: Number(liveMatch.bowler.runs) || 0,
+      wickets: Number(liveMatch.bowler.wickets) || 0,
+      economy: Number(liveMatch.bowler.economy) || 0,
+    };
   }
 
   return {

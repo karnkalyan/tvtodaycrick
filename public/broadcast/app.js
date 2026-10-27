@@ -254,6 +254,7 @@
       localStorage.removeItem('npl-gfx-v7-state');
       localStorage.removeItem('npl-gfx-v6-state');
     } catch(e){}
+    const rawSaved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
     if (rawSaved && (
       rawSaved.score?.runs === 64 || 
       rawSaved.score?.overs === '16.0' || 
@@ -625,6 +626,45 @@
     if (anchorFowEl) anchorFowEl.innerHTML = fowHtml;
   }
 
+  const PLAYER_NICKNAME_MAP = {
+    JIMMY: 'JAMES NEESHAM',
+    NEESHAM: 'JAMES NEESHAM',
+    MOEEN: 'MOEEN ALI',
+    HARMEET: 'HARMEET SINGH',
+    TALAT: 'HUSSAIN TALAT',
+    ARIFUL: 'ARIFUL ISLAM',
+    SANDEEP: 'SANDEEP LAMICHHANE',
+    LOKESH: 'LOKESH BAM',
+    MOUSOM: 'MOUSOM DHAKAL',
+    NAREN: 'NAREN SAUD',
+    RANJEET: 'RANJEET KUMAR',
+    KAMAL: 'KAMAL SINGH AIREE',
+    LALIT: 'LALIT RAJBANSHI',
+    RAHUL: 'RAHUL YADAV',
+    PAWAN: 'PAWAN SARRAF',
+    WATT: 'MARK WATT',
+    DEEPAK: 'DEEPAK DUMRE',
+    'दिपक डुम्रे': 'DEEPAK DUMRE',
+    'दीपक डुम्रे': 'DEEPAK DUMRE',
+    'जिमी नीशम': 'JAMES NEESHAM',
+    'मौसम ढकाल': 'MOUSOM DHAKAL',
+    'नरेन साउद': 'NAREN SAUD',
+    'लोकेश बम': 'LOKESH BAM',
+    'सन्दीप लामिछाने': 'SANDEEP LAMICHHANE',
+    'रञ्जित कुमार': 'RANJEET KUMAR',
+    'कमल सिंह ऐरी': 'KAMAL SINGH AIREE',
+  };
+
+  function cleanDisplayName(raw) {
+    if (!raw) return '';
+    const trimmed = String(raw).trim();
+    if (PLAYER_NICKNAME_MAP[trimmed]) return PLAYER_NICKNAME_MAP[trimmed];
+    const stripped = trimmed.replace(/^(?:players?[-_\s]+)?[0-9a-f]{10,16}[-_\s]*/i, '').trim();
+    const upperKey = stripped.toUpperCase();
+    if (PLAYER_NICKNAME_MAP[upperKey]) return PLAYER_NICKNAME_MAP[upperKey];
+    return stripped || trimmed;
+  }
+
   function renderRecent(){
     const isScheduled = (state.score.overs === '0.0' || state.score.overs === '0' || !state.score.overs) && (Number(state.score.runs) === 0 || !state.score.runs) || (state.live?.innings && state.live.innings.toUpperCase().includes('SCHEDULED'));
     const isCompleted = (state.live?.innings && state.live.innings.toUpperCase().includes('COMPLETED')) || (state.live?.rateText && state.live.rateText.toUpperCase().includes('FINAL RESULT'));
@@ -666,9 +706,12 @@
       const value = String(token).toUpperCase();
       return total + (value === 'W' || value === '-' ? 0 : (parseInt(value, 10) || 0));
     }, 0);
-    setText('overSummaryLabel', isScheduled ? 'OVER 1 PENDING' : `OVER ${Math.floor(parseFloat(state.score.overs) || 0) + 1}`);
+    const [ovWhole, ovPart] = String(state.score.overs || '0.0').split('.').map(Number);
+    const isEndOfOver = (ovWhole || 0) > 0 && (ovPart || 0) === 0 && legalBallsInOver >= 6;
+    const displayOverNumber = isEndOfOver ? ovWhole : (ovWhole || 0) + 1;
+    setText('overSummaryLabel', isScheduled ? 'OVER 1 PENDING' : `OVER ${displayOverNumber}`);
     setText('overSummaryRuns', `${overRuns} RUN${overRuns === 1 ? '' : 'S'}`);
-    setText('overSummaryBowler', state.live.bowlerName || 'BOWLER');
+    setText('overSummaryBowler', cleanDisplayName(state.live.bowlerName) || 'BOWLER');
     setText('overSummaryFigures', `${state.live.bowlerFigures || '0/0'} · ${state.live.bowlerOvers || '0.0'} OV`);
     const ovRem = $('#masterOverStatus');
     if (ovRem) {
@@ -676,13 +719,21 @@
         ovRem.textContent = 'FIRST OVER PENDING';
       } else if (isCompleted) {
         ovRem.textContent = 'MATCH COMPLETED';
+      } else if (isEndOfOver) {
+        ovRem.textContent = `OVER ${displayOverNumber} COMPLETE`;
       } else {
         ovRem.textContent = `${Math.max(0, 6 - legalBallsInOver)} BALLS REMAINING`;
       }
     }
     const ovProg = $('#masterOverProgressTitle');
     if (ovProg) {
-      ovProg.textContent = isScheduled ? 'OVER 1 PENDING' : isCompleted ? `INNINGS COMPLETED · ${state.score.overs} OV` : `OVER ${Math.floor(parseFloat(state.score.overs) || 0) + 1} IN PROGRESS`;
+      ovProg.textContent = isScheduled
+        ? 'OVER 1 PENDING'
+        : isCompleted
+          ? `INNINGS COMPLETED · ${state.score.overs} OV`
+          : isEndOfOver
+            ? `OVER ${displayOverNumber} COMPLETED`
+            : `OVER ${displayOverNumber} IN PROGRESS`;
     }
   }
 
@@ -770,10 +821,51 @@
       }
     }
 
-    const partRuns = sRuns + nsRuns;
-    const partBalls = sBalls + nsBalls;
+    const strikerClean = cleanDisplayName(l.strikerName) || 'BATTER';
+    const nonStrikerClean = cleanDisplayName(l.nonStrikerName) || 'NON-STRIKER';
+    const bowlerClean = cleanDisplayName(l.bowlerName) || 'BOWLER';
+
+    const strikerSummaryRow = Array.isArray(state.summary)
+      ? state.summary.find(r => cleanDisplayName(r[0]).toUpperCase() === strikerClean.toUpperCase())
+      : null;
+    const nonStrikerSummaryRow = Array.isArray(state.summary)
+      ? state.summary.find(r => cleanDisplayName(r[0]).toUpperCase() === nonStrikerClean.toUpperCase())
+      : null;
+
+    const sFours = l.strikerFours !== undefined ? Number(l.strikerFours) || 0 : (strikerSummaryRow ? Number(strikerSummaryRow[3]) || 0 : 0);
+    const sSixes = l.strikerSixes !== undefined ? Number(l.strikerSixes) || 0 : (strikerSummaryRow ? Number(strikerSummaryRow[4]) || 0 : 0);
+    const sDots = Math.max(0, sBalls - sFours - sSixes - Math.max(0, Math.ceil(Math.max(0, sRuns - sFours * 4 - sSixes * 6) / 1.3)));
+
+    const nsFours = l.nonStrikerFours !== undefined ? Number(l.nonStrikerFours) || 0 : (nonStrikerSummaryRow ? Number(nonStrikerSummaryRow[3]) || 0 : 0);
+    const nsSixes = l.nonStrikerSixes !== undefined ? Number(l.nonStrikerSixes) || 0 : (nonStrikerSummaryRow ? Number(nonStrikerSummaryRow[4]) || 0 : 0);
+    const nsDots = Math.max(0, nsBalls - nsFours - nsSixes - Math.max(0, Math.ceil(Math.max(0, nsRuns - nsFours * 4 - nsSixes * 6) / 1.3)));
+
+    let partRuns = sRuns + nsRuns;
+    let partBalls = sBalls + nsBalls;
+    if (l.partnershipRuns !== undefined && l.partnershipBalls !== undefined) {
+      partRuns = Number(l.partnershipRuns) || 0;
+      partBalls = Number(l.partnershipBalls) || 0;
+    } else if (Array.isArray(state.fow) && state.fow.length > 0) {
+      const lastFow = state.fow[state.fow.length - 1];
+      const fowScoreParts = String(lastFow[0] || '').split('/');
+      const lastWktRuns = Number(fowScoreParts.length > 1 ? fowScoreParts[1] : fowScoreParts[0]);
+      const fowOvMatch = String(lastFow[2] || '').match(/(\d+)(?:\.(\d+))?/);
+      if (!Number.isNaN(lastWktRuns) && Number(s.runs) >= lastWktRuns) {
+        partRuns = Number(s.runs) - lastWktRuns;
+      }
+      if (fowOvMatch) {
+        const wktBalls = (Number(fowOvMatch[1]) || 0) * 6 + (Number(fowOvMatch[2]) || 0);
+        if (totalBalls >= wktBalls) {
+          partBalls = totalBalls - wktBalls;
+        }
+      }
+    } else if (Number(s.wickets || 0) === 0 && (Number(s.runs || 0) > 0 || totalBalls > 0)) {
+      partRuns = Number(s.runs) || 0;
+      partBalls = totalBalls;
+    }
     const partRate = partBalls > 0 ? ((partRuns / partBalls) * 6).toFixed(2) : '-';
-    const splitAPct = partRuns > 0 ? Math.round((sRuns / partRuns) * 100) : 50;
+    const batterCombinedRuns = sRuns + nsRuns;
+    const splitAPct = batterCombinedRuns > 0 ? Math.round((sRuns / batterCombinedRuns) * 100) : 50;
     const splitBPct = 100 - splitAPct;
     const chaseNeed = Number(targetVal) > 0 ? Math.max(0, Number(targetVal) - Number(s.runs || 0)) : 0;
     const chaseBalls = Math.max(0, 120 - totalBalls);
@@ -803,33 +895,36 @@
     const bNoBalls = String(l.bowlerNoBalls !== undefined && l.bowlerNoBalls !== null ? l.bowlerNoBalls : (state.score.recent || []).filter(b => /NB/i.test(b)).length);
     const bWides = String(l.bowlerWides !== undefined && l.bowlerWides !== null ? l.bowlerWides : (state.score.recent || []).filter(b => /WD/i.test(b)).length);
 
+    const isEndOfFullOver = (ov || 0) > 0 && (bl || 0) === 0 && (state.score.recent || []).filter(b => b !== '-' && !/(?:WD|NB)$/i.test(String(b))).length >= 6;
+    const overTitleNum = isEndOfFullOver ? ov : (ov || 0) + 1;
+
     const map={
-      inningsText:l.innings,rateText:l.rateText,strikerName:l.strikerName,strikerRuns:l.strikerRuns,strikerBalls:l.strikerBalls,nonStrikerName:l.nonStrikerName,nonStrikerRuns:l.nonStrikerRuns,nonStrikerBalls:l.nonStrikerBalls,bowlerName:l.bowlerName,bowlerFigures:l.bowlerFigures,bowlerOvers:l.bowlerOvers,requirement:l.requirement,matchLabel:l.matchLabel,venueLabel:l.venue,
+      inningsText:l.innings,rateText:l.rateText,strikerName:strikerClean,strikerRuns:l.strikerRuns,strikerBalls:l.strikerBalls,nonStrikerName:nonStrikerClean,nonStrikerRuns:l.nonStrikerRuns,nonStrikerBalls:l.nonStrikerBalls,bowlerName:bowlerClean,bowlerFigures:l.bowlerFigures,bowlerOvers:l.bowlerOvers,requirement:l.requirement,matchLabel:l.matchLabel,venueLabel:l.venue,
       ltStat:`${sRuns} RUNS`,ltNumber:state.match.inningsNumber || 1,profileNumber:sRuns,bowlerProfileNumber:bWkts,
-      compactStrikerName:l.strikerName,compactStrikerRuns:l.strikerRuns,compactStrikerBalls:l.strikerBalls,compactBowlerName:l.bowlerName,compactBowlerFigures:l.bowlerFigures,compactBowlerOvers:l.bowlerOvers,compactOvers:s.overs,compactScore:`${s.runs}/${s.wickets}`,
+      compactStrikerName:strikerClean,compactStrikerRuns:l.strikerRuns,compactStrikerBalls:l.strikerBalls,compactBowlerName:bowlerClean,compactBowlerFigures:l.bowlerFigures,compactBowlerOvers:l.bowlerOvers,compactOvers:s.overs,compactScore:`${s.runs}/${s.wickets}`,
       // 16:9 Master Card
       masterRuns:s.runs,masterWickets:s.wickets,masterOvers:s.overs,masterRate:crr,masterRrr:rrr,masterTarget:targetVal,masterProjected:projected,
       masterInnings:l.innings,masterMatchPill:matchPillText,masterMatchLabel:l.matchLabel,masterVenue:l.venue,masterRequirement:l.requirement,
       masterTeamACode:a.short,masterTeamBCode:b.short,
-      masterStrikerName:l.strikerName,masterStrikerRuns:`${sRuns}*`,masterStrikerBalls:sBalls,masterStrikerSR:sSR,
-      masterStrikerFours:Math.max(0, Math.floor(sRuns / 7)),masterStrikerSixes:Math.max(0, Math.floor(sRuns / 18)),masterStrikerDots:Math.max(0, sBalls - Math.floor(sRuns / 1.8)),
-      masterNonStrikerName:l.nonStrikerName,masterNonStrikerRuns:`${nsRuns}*`,masterNonStrikerBalls:nsBalls,masterNonStrikerSR:nsSR,
-      masterNonStrikerFours:Math.max(0, Math.floor(nsRuns / 8)),masterNonStrikerSixes:Math.max(0, Math.floor(nsRuns / 22)),masterNonStrikerDots:Math.max(0, nsBalls - Math.floor(nsRuns / 1.8)),
-      masterBowlerName:l.bowlerName,masterBowlerFigures:l.bowlerFigures,masterBowlerOvers:l.bowlerOvers,masterBowlerEcon:bEcon,
+      masterStrikerName:strikerClean,masterStrikerRuns:`${sRuns}*`,masterStrikerBalls:sBalls,masterStrikerSR:sSR,
+      masterStrikerFours:sFours,masterStrikerSixes:sSixes,masterStrikerDots:sDots,
+      masterNonStrikerName:nonStrikerClean,masterNonStrikerRuns:`${nsRuns}*`,masterNonStrikerBalls:nsBalls,masterNonStrikerSR:nsSR,
+      masterNonStrikerFours:nsFours,masterNonStrikerSixes:nsSixes,masterNonStrikerDots:nsDots,
+      masterBowlerName:bowlerClean,masterBowlerFigures:l.bowlerFigures,masterBowlerOvers:l.bowlerOvers,masterBowlerEcon:bEcon,
       masterBowlerMaidens:bMaidens,masterBowlerDots:bDots,masterBowlerBoundaries:bBoundaries,masterBowlerNoBalls:bNoBalls,masterBowlerWides:bWides,
       masterPartnershipLabel:partnershipLabel,masterPartnershipRuns:`${partRuns} RUNS`,masterPartnershipBalls:partBalls,masterPartnershipRate:partRate,
       masterWinProbAText:`${a.short} ${winProbA}%`,masterWinProbBText:`${b.short} ${winProbB}%`,
       masterTossText:state.live.tossText || `${b.name} WON TOSS & ELECTED TO BOWL`,
       masterBowlerSpellBadge: isScheduled ? '1ST SPELL' : `SPELL ${Math.max(1, Math.ceil(parseFloat(l.bowlerOvers) || 1))} OV`,
-      masterOverProgressTitle: isScheduled ? 'FIRST OVER PENDING' : `OVER ${Math.floor(curOv) + 1} IN PROGRESS`,
+      masterOverProgressTitle: isScheduled ? 'FIRST OVER PENDING' : isEndOfFullOver ? `OVER ${overTitleNum} COMPLETED` : `OVER ${overTitleNum} IN PROGRESS`,
       // Anchor master (manual full-screen layer with rich game informatics)
       anchorMasterRuns:s.runs,anchorMasterWickets:s.wickets,anchorMasterOvers:s.overs,
       anchorMasterMatchLabel:l.matchLabel,anchorMasterVenue:l.venue,anchorMasterRequirement:l.requirement,
-      anchorMasterStrikerName:l.strikerName,anchorMasterStrikerRuns:`${sRuns}*`,anchorMasterStrikerBalls:sBalls,anchorMasterStrikerSR:sSR,
-      anchorMasterStrikerFours:Math.max(0, Math.floor(sRuns / 7)),anchorMasterStrikerSixes:Math.max(0, Math.floor(sRuns / 18)),
-      anchorMasterNonStrikerName:l.nonStrikerName,anchorMasterNonStrikerRuns:`${nsRuns}*`,anchorMasterNonStrikerBalls:nsBalls,anchorMasterNonStrikerSR:nsSR,
-      anchorMasterNonStrikerFours:Math.max(0, Math.floor(nsRuns / 8)),anchorMasterNonStrikerSixes:Math.max(0, Math.floor(nsRuns / 22)),
-      anchorMasterBowlerName:l.bowlerName,anchorMasterBowlerFigures:l.bowlerFigures,anchorMasterBowlerOvers:l.bowlerOvers,anchorMasterBowlerEcon:bEcon,
+      anchorMasterStrikerName:strikerClean,anchorMasterStrikerRuns:`${sRuns}*`,anchorMasterStrikerBalls:sBalls,anchorMasterStrikerSR:sSR,
+      anchorMasterStrikerFours:sFours,anchorMasterStrikerSixes:sSixes,
+      anchorMasterNonStrikerName:nonStrikerClean,anchorMasterNonStrikerRuns:`${nsRuns}*`,anchorMasterNonStrikerBalls:nsBalls,anchorMasterNonStrikerSR:nsSR,
+      anchorMasterNonStrikerFours:nsFours,anchorMasterNonStrikerSixes:nsSixes,
+      anchorMasterBowlerName:bowlerClean,anchorMasterBowlerFigures:l.bowlerFigures,anchorMasterBowlerOvers:l.bowlerOvers,anchorMasterBowlerEcon:bEcon,
       anchorMasterBowlerMaidens:bMaidens,anchorMasterBowlerDots:bDots,anchorMasterBowlerNoBalls:bNoBalls,anchorMasterBowlerWides:bWides,
       anchorMasterBowlerStyle:b.name.includes('ROYALS') ? 'RIGHT-ARM FAST MEDIUM' : 'LEFT-ARM ORTHODOX SPIN',
       anchorMasterPartnershipLabel:partnershipLabel,anchorMasterPartnershipRuns:`${partRuns} RUNS`,anchorMasterPartnershipBalls:`${partBalls} BALLS`,anchorMasterPartnershipRate:partRate,
@@ -839,9 +934,9 @@
       anchorMasterPhaseDeath:l.phaseDeath || (curOv <= 15 ? 'YET TO BAT' : `${s.runs}/${s.wickets} (${s.overs} OV)`),
       anchorMasterRate:crr,anchorMasterRrr:rrr,anchorMasterTarget:targetVal,
       // Dual screen
-      dualScore:`${s.runs}/${s.wickets}`,dualOvers:`${s.overs} OVERS · ${l.rateText}`,dualRequirement:l.requirement,dualBatters:`${l.strikerName} ${l.strikerRuns} (${l.strikerBalls}) · ${l.nonStrikerName} ${l.nonStrikerRuns} (${l.nonStrikerBalls})`,dualBowler:`${l.bowlerName} · ${l.bowlerFigures} (${l.bowlerOvers} ov)`,dualMatchLabel:l.matchLabel,
-      partnershipLabel,partnershipStriker:l.strikerName,partnershipStrikerRuns:sRuns,partnershipStrikerBalls:sBalls,
-      partnershipNonStriker:l.nonStrikerName,partnershipNonStrikerRuns:nsRuns,partnershipNonStrikerBalls:nsBalls,partnershipRuns:partRuns,partnershipBalls:`${partBalls} BALLS`,
+      dualScore:`${s.runs}/${s.wickets}`,dualOvers:`${s.overs} OVERS · ${l.rateText}`,dualRequirement:l.requirement,dualBatters:`${strikerClean} ${l.strikerRuns} (${l.strikerBalls}) · ${nonStrikerClean} ${l.nonStrikerRuns} (${l.nonStrikerBalls})`,dualBowler:`${bowlerClean} · ${l.bowlerFigures} (${l.bowlerOvers} ov)`,dualMatchLabel:l.matchLabel,
+      partnershipLabel,partnershipStriker:strikerClean,partnershipStrikerRuns:sRuns,partnershipStrikerBalls:sBalls,
+      partnershipNonStriker:nonStrikerClean,partnershipNonStrikerRuns:nsRuns,partnershipNonStrikerBalls:nsBalls,partnershipRuns:partRuns,partnershipBalls:`${partBalls} BALLS`,
       chaseNeed,chaseBalls,chaseRate:rrr,chaseWickets:Math.max(0,10-Number(s.wickets||0)),
       summaryFooterScore:`${s.runs}/${s.wickets}`,summaryFooterRate:crr,summaryFooterOvers:s.overs,
       bowlingFooterOvers:s.overs,bowlingFooterRuns:s.runs,bowlingFooterWickets:s.wickets,
@@ -1247,11 +1342,15 @@
           Object.assign(state.live, p.live);
         }
         if(p.points && Array.isArray(p.points)){
-          state.points = p.points;
+          const incomingHasPlayed = p.points.some(r => Number(r[2]) > 0);
+          const currentHasPlayed = Array.isArray(state.points) && state.points.some(r => Number(r[2]) > 0);
+          if (incomingHasPlayed || !currentHasPlayed) {
+            state.points = p.points;
+          }
         }
         if(p.fow && Array.isArray(p.fow)){
           state.fow = p.fow;
-        } else if(p.match && p.match.teamA) {
+        } else if(p.match && p.match.teamA && (!Array.isArray(state.fow) || state.fow.length === 0)) {
           const a = team(state.match.teamA);
           state.fow = getContextualFow(a, state.score.runs, state.score.wickets, state.score.overs, state.live.strikerName, state.live.nonStrikerName);
         }
@@ -1933,8 +2032,28 @@
   let broadcastWs = null;
   let lastDbStateVersion = '';
   let lastDbStateSnapshot = '';
+  const pinnedQueryGraphic = params.get('graphic') || params.get('layer') || params.get('card') || params.get('view');
 
-  async function refreshStateFromDb(){
+  function mergeIncomingFullState(incomingState){
+    const prevPoints = Array.isArray(state?.points) ? deepClone(state.points) : null;
+    const prevUiGraphic = state?.ui?.graphic || null;
+    const next = merge(state || defaults, incomingState);
+    if (prevPoints && prevPoints.some(r => Number(r[2]) > 0)) {
+      const nextHasPlayed = Array.isArray(next.points) && next.points.some(r => Number(r[2]) > 0);
+      if (!nextHasPlayed) {
+        next.points = prevPoints;
+      }
+    }
+    if (pinnedQueryGraphic) {
+      next.ui.graphic = pinnedQueryGraphic;
+    } else if (prevUiGraphic && incomingState?.ui?.graphic === undefined) {
+      next.ui.graphic = prevUiGraphic;
+    }
+    return next;
+  }
+
+  async function refreshStateFromDb(force = false){
+    if (!force && broadcastWs && broadcastWs.readyState === WebSocket.OPEN) return;
     try{
       const res = await fetch('/api/broadcast/state?live=' + Date.now(), { cache: 'no-store' });
       if(!res.ok) return;
@@ -1945,8 +2064,11 @@
       lastDbStateVersion = version;
       lastDbStateSnapshot = snapshot;
       const prev = deepClone(state);
-      state = merge(defaults, data.state);
-      render(prev, false);
+      state = mergeIncomingFullState(data.state);
+      applyTeamTheme();
+      renderLists();
+      renderLive(prev, false);
+      applyVisibility(false);
     }catch(e){}
   }
 
@@ -1975,9 +2097,12 @@
           if (msg.type === 'init' && msg.state) {
             console.log('[Broadcast GFX] Loaded DB state via WebSocket:', msg.state);
             const prev = deepClone(state);
-            state = merge(defaults, msg.state);
+            state = mergeIncomingFullState(msg.state);
             lastDbStateVersion = '';
-            render(prev, false);
+            applyTeamTheme();
+            renderLists();
+            renderLive(prev, false);
+            applyVisibility(false);
             return;
           }
           receiveCue(msg);
@@ -1995,7 +2120,7 @@
   }
 
   async function initFromDb(){
-    await refreshStateFromDb();
+    await refreshStateFromDb(true);
 
     try{
       const nplRes = await fetch('/api/broadcast/npl-data');

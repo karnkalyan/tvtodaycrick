@@ -19,6 +19,7 @@ import styles from "./output.module.css";
 
 type BroadcastState = {
   match?: {
+    matchId?: number | null;
     teamA?: string;
     teamB?: string;
     teamAName?: string;
@@ -314,17 +315,21 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
   }, []);
 
   const applyIncomingState = useCallback((incoming?: BroadcastState | null, inferDelivery = false) => {
-    if (!incoming) {
-      stateRef.current = DEFAULT_STATE;
-      setState(DEFAULT_STATE);
+    if (!incoming || typeof incoming !== "object") {
       return;
     }
     const previous = stateRef.current;
 
-    const inRuns = Number(incoming.score?.runs ?? 0);
-    const inWickets = Number(incoming.score?.wickets ?? 0);
-    const inOvers = String(incoming.score?.overs ?? "0.0");
-    const isResetIncoming = inRuns === 0 && inWickets === 0 && (inOvers === "0.0" || inOvers === "0");
+    const inRuns = Number(incoming.score?.runs ?? previous.score?.runs ?? 0);
+    const inWickets = Number(incoming.score?.wickets ?? previous.score?.wickets ?? 0);
+    const inOvers = String(incoming.score?.overs ?? previous.score?.overs ?? "0.0");
+    const explicitResetFlag = (incoming as any).isReset === true || (
+      incoming.score !== undefined &&
+      incoming.live?.rateText === "MATCH NOT STARTED" &&
+      incoming.live?.strikerName === "BATTER" &&
+      incoming.live?.bowlerName === "BOWLER"
+    );
+    const isResetIncoming = explicitResetFlag && inRuns === 0 && inWickets === 0 && (inOvers === "0.0" || inOvers === "0");
     const hadPreviousData = Number(previous.score?.runs ?? 0) > 0 || Number(previous.score?.wickets ?? 0) > 0 || (previous.score?.overs && previous.score.overs !== "0.0");
 
     // Clean game reset detection: wipe previous match numbers and player cards
@@ -351,18 +356,21 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
       return;
     }
 
-    if (inferDelivery && pollReady.current && !connectedRef.current && !isResetIncoming) {
+    const sameMatch = !incoming.match?.matchId || !previous.match?.matchId || Number(incoming.match.matchId) === Number(previous.match.matchId);
+    const sameInnings = !incoming.match?.inningsNumber || !previous.match?.inningsNumber || Number(incoming.match.inningsNumber) === Number(previous.match.inningsNumber);
+
+    if (inferDelivery && pollReady.current && !isResetIncoming && sameMatch && sameInnings && Date.now() - lastEvent.current.at > 1500) {
       const oldRecent = previous.score?.recent || [];
       const nextRecent = incoming.score?.recent || [];
-      const changed = JSON.stringify(oldRecent) !== JSON.stringify(nextRecent);
-      if (changed && nextRecent.length) {
+      const changed = nextRecent.length > 0 && JSON.stringify(oldRecent) !== JSON.stringify(nextRecent);
+      if (changed) {
         const inferred = TOKEN_EVENT[nextRecent[nextRecent.length - 1]];
         if (inferred) playEvent(inferred);
-      } else if (Number(incoming.score?.wickets || 0) > Number(previous.score?.wickets || 0)) {
+      } else if (incoming.score?.wickets !== undefined && Number(incoming.score.wickets) > Number(previous.score?.wickets || 0)) {
         playEvent("wicket");
-      } else {
-        const runDelta = Number(incoming.score?.runs || 0) - Number(previous.score?.runs || 0);
-        const oversChanged = incoming.score?.overs !== previous.score?.overs;
+      } else if (incoming.score?.runs !== undefined) {
+        const runDelta = Number(incoming.score.runs) - Number(previous.score?.runs || 0);
+        const oversChanged = incoming.score?.overs !== undefined && incoming.score.overs !== previous.score?.overs;
         const inferred = runDelta === 6 ? "six" : runDelta === 4 ? "four" : runDelta === 3 ? "run3" : runDelta === 2 ? "run2" : runDelta === 1 && oversChanged ? "run1" : runDelta === 1 ? "wide" : null;
         if (inferred) playEvent(inferred);
       }
@@ -401,7 +409,7 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
     return () => { cancelled = true; };
   }, [applyIncomingState]);
 
-  // Listen to cross-tab BroadcastChannel for instant match resets
+  // Listen to cross-tab BroadcastChannel for instant cues and updates
   useEffect(() => {
     let channel: BroadcastChannel | null = null;
     try {
@@ -414,11 +422,26 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
           const resetState = msg.state ? mergeState(DEFAULT_STATE, msg.state) : DEFAULT_STATE;
           stateRef.current = resetState;
           setState(resetState);
+          return;
+        }
+        if (action === "action") {
+          const type = normalizeEvent(msg.name || msg.data?.name);
+          if (type) playEvent(type);
+        }
+        if (action === "stinger") {
+          const type = normalizeEvent(msg.event || msg.data?.event);
+          if (type) playEvent(type);
+        }
+        if (action === "scoreUpdate") {
+          applyIncomingState({ score: msg.data || msg.payload || msg.score }, true);
+        }
+        if (action === "updateData" || action === "dataUpdated") {
+          applyIncomingState(msg.payload || msg.data || msg, true);
         }
       };
     } catch {}
     return () => { channel?.close(); };
-  }, []);
+  }, [applyIncomingState, playEvent]);
 
   useEffect(() => {
     let active = true;
@@ -451,8 +474,8 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
               const type = normalizeEvent(packet.event || packet.data?.event);
               if (type) playEvent(type);
             }
-            if (action === "scoreUpdate") applyIncomingState({ score: packet.data || packet.payload }, false);
-            if (action === "updateData" || action === "dataUpdated") applyIncomingState(packet.payload || packet.data, false);
+            if (action === "scoreUpdate") applyIncomingState({ score: packet.data || packet.payload || packet.score }, true);
+            if (action === "updateData" || action === "dataUpdated") applyIncomingState(packet.payload || packet.data || packet, true);
           } catch { /* Ignore malformed broadcast packets. */ }
         };
         socket.onclose = () => {
@@ -475,6 +498,8 @@ export default function KashtrixOutput({ variant = "arena" }: { variant?: "arena
 
   useEffect(() => {
     const timer = setInterval(async () => {
+      // Rely on WebSocket events when connected; only poll DB if WebSocket is unavailable
+      if (connectedRef.current) return;
       try {
         const response = await fetch(`/api/broadcast/state?live=${Date.now()}`, { cache: "no-store" });
         if (!response.ok) return;

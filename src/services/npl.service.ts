@@ -766,7 +766,9 @@ async function persist(data: NplSeason, full: boolean) {
 
         // Record MatchInnings if scores are present and score seeding is enabled
         const homeParsed = shouldSeedScores ? parseScoreDetails(f.homeScore) : null;
-        if (homeParsed) {
+        const awayParsed = shouldSeedScores ? parseScoreDetails(f.awayScore) : null;
+        const hasAwayStarted = Boolean(awayParsed && (awayParsed.runs > 0 || awayParsed.wickets > 0 || f.status === "COMPLETED"));
+        if (homeParsed && (homeParsed.runs > 0 || homeParsed.wickets > 0 || f.status === "COMPLETED")) {
           await tx.matchInnings.upsert({
             where: { matchId_inningsNumber: { matchId: savedMatch.id, inningsNumber: 1 } },
             create: {
@@ -775,18 +777,17 @@ async function persist(data: NplSeason, full: boolean) {
               inningsNumber: 1,
               runs: homeParsed.runs,
               wickets: homeParsed.wickets,
-              status: f.status === "COMPLETED" ? "COMPLETED" : "LIVE",
+              status: f.status === "COMPLETED" || hasAwayStarted ? "COMPLETED" : "LIVE",
             },
             update: {
               runs: homeParsed.runs,
               wickets: homeParsed.wickets,
-              status: f.status === "COMPLETED" ? "COMPLETED" : "LIVE",
+              status: f.status === "COMPLETED" || hasAwayStarted ? "COMPLETED" : "LIVE",
             },
           });
         }
 
-        const awayParsed = shouldSeedScores ? parseScoreDetails(f.awayScore) : null;
-        if (awayParsed) {
+        if (awayParsed && hasAwayStarted) {
           await tx.matchInnings.upsert({
             where: { matchId_inningsNumber: { matchId: savedMatch.id, inningsNumber: 2 } },
             create: {
@@ -924,8 +925,9 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
       }
 
       // OnlineKhabar URL fallback based on match number (Match 1 -> 315, Match 2 -> 316, etc.)
-      if (!okUrl) {
-        okUrl = getOnlineKhabarUrlForMatch(m.matchNumber || "") || "";
+      const season3OkUrl = getOnlineKhabarUrlForMatch(m.matchNumber || "") || "";
+      if (!okUrl || /^Season3-M\d+$/i.test(m.matchNumber || "")) {
+        okUrl = season3OkUrl || okUrl;
       }
 
       // CricNepal URL fallback
@@ -949,28 +951,31 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
           try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
         }
       } else if (preferredProvider === "nplt20league") {
-        try {
-          const snapshot = await fetchNplT20LiveSnapshot();
-          const list = Array.isArray(snapshot) ? snapshot : (snapshot?.matches || snapshot?.data?.matches || []);
-          const matchedNpl = list.find((item: any) =>
-            m.title.toLowerCase().includes((item.team1?.name || "").toLowerCase()) ||
-            m.title.toLowerCase().includes((item.team2?.name || "").toLowerCase()) ||
-            (m.homeTeam?.name && item.team1?.name?.includes(m.homeTeam.name)) ||
-            (m.awayTeam?.name && item.team2?.name?.includes(m.awayTeam.name))
-          );
-          if (matchedNpl) {
-            parsed = convertNplT20LiveMatchToParsed(matchedNpl);
-          }
-        } catch {}
+        // Prefer OnlineKhabar/CricNepal for full ball-by-ball and batter/bowler stats, falling back to NPLT20 snapshot
+        if (okUrl) {
+          try { parsed = await fetchOnlineKhabarLiveMatch(okUrl); } catch {}
+        }
         if (!parsed && cnUrl) {
           try { parsed = await fetchCricNepalLiveMatch(cnUrl); } catch {}
         }
-        if (!parsed && okUrl) {
-          try { parsed = await fetchOnlineKhabarLiveMatch(okUrl); } catch {}
+        if (!parsed) {
+          try {
+            const snapshot = await fetchNplT20LiveSnapshot();
+            const list = Array.isArray(snapshot) ? snapshot : (snapshot?.matches || snapshot?.data?.matches || []);
+            const matchedNpl = list.find((item: any) =>
+              m.title.toLowerCase().includes((item.team1?.name || "").toLowerCase()) ||
+              m.title.toLowerCase().includes((item.team2?.name || "").toLowerCase()) ||
+              (m.homeTeam?.name && item.team1?.name?.includes(m.homeTeam.name)) ||
+              (m.awayTeam?.name && item.team2?.name?.includes(m.awayTeam.name))
+            );
+            if (matchedNpl) {
+              parsed = convertNplT20LiveMatchToParsed(matchedNpl);
+            }
+          } catch {}
         }
       } else {
-        // Default (cricnepal): try CricNepal first, fallback to OnlineKhabar
-        if (cnUrl) {
+        // Default (cricnepal): for Season3-M2+ where cnUrl is absent, use OnlineKhabar directly
+        if (cnUrl && !/^Season3-M(?:[2-9]|\d{2,})$/i.test(m.matchNumber || "")) {
           try {
             parsed = await fetchCricNepalLiveMatch(cnUrl);
           } catch {}
@@ -982,12 +987,22 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
         }
       }
 
-      // Cross-enrich: If we have basic score from CricNepal, enrich with ball-by-ball,
-      // fall-of-wickets, and player scorecard from OnlineKhabar if available
+      // Cross-enrich: If we have basic score from CricNepal or NPLT20, enrich with ball-by-ball,
+      // fall-of-wickets, live batters/bowler, and player scorecard from OnlineKhabar if available
       if (parsed && okUrl && (!parsed.playerPerformances?.length || !parsed.fowByInnings)) {
         try {
           const okData = await fetchOnlineKhabarLiveMatch(okUrl);
           if (okData) {
+            if (okData.innings?.length) {
+              parsed.innings = okData.innings;
+              parsed.currentInningsNumber = okData.currentInningsNumber;
+            }
+            if (okData.liveSummary?.currentBatters?.length || okData.liveSummary?.currentBowler) {
+              parsed.liveSummary = okData.liveSummary;
+            }
+            if (okData.toss && !parsed.toss) {
+              parsed.toss = okData.toss;
+            }
             if (okData.playerPerformances?.length && !parsed.playerPerformances?.length) {
               parsed.playerPerformances = okData.playerPerformances;
             }
@@ -1051,6 +1066,7 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
           for (const lm of liveMatches) {
             const match = await prisma.match.findFirst({
               where: {
+                tournament: { season: year },
                 OR: [
                   { title: { contains: lm.team1?.name } },
                   { title: { contains: lm.team2?.name } },
@@ -1058,10 +1074,19 @@ export async function syncLiveScoresOnly(year = "2026"): Promise<{ live: boolean
               },
             });
             if (match) {
-              const parsedNpl = convertNplT20LiveMatchToParsed(lm);
-              await applyCricNepalMatchToDb(match.id, parsedNpl);
-              updatedCount++;
-              if (parsedNpl.status === "LIVE") hasLive = true;
+              const okUrl = getOnlineKhabarUrlForMatch(match.matchNumber || "");
+              let parsedFallback: any = null;
+              if (okUrl) {
+                try { parsedFallback = await fetchOnlineKhabarLiveMatch(okUrl); } catch {}
+              }
+              if (!parsedFallback) {
+                parsedFallback = convertNplT20LiveMatchToParsed(lm);
+              }
+              if (parsedFallback?.status === "LIVE") {
+                await applyCricNepalMatchToDb(match.id, parsedFallback);
+                updatedCount++;
+                hasLive = true;
+              }
             }
           }
         }

@@ -71,6 +71,7 @@ export const DEFAULT_BROADCAST_STATE: BroadcastState = {
 };
 
 import { getFranchiseBrand } from "./npl-franchises";
+import { cleanPlayerDisplayName } from "./onlinekhabar-live";
 
 /**
  * Builds the canonical BroadcastState object from a live Match DB record
@@ -88,10 +89,19 @@ export function buildBroadcastStateFromMatch(
 
   // Determine active innings:
   // If explicitly chosen (e.g. by operator in score-entry), respect it.
-  // Otherwise, if Innings 2 has balls/runs, is LIVE, or match is COMPLETED, default to Innings 2!
+  // Otherwise, respect parsedLive.currentInningsNumber if present, or check whether Innings 2 has genuinely started.
   let activeInningsNumber = activeInningsOverride || 1;
   if (!activeInningsOverride) {
-    if (inn2 && (inn2.status === "LIVE" || inn2.balls > 0 || inn2.runs > 0 || match.status === "COMPLETED")) {
+    if (parsedLive?.currentInningsNumber === 1 || parsedLive?.currentInningsNumber === 2) {
+      activeInningsNumber = parsedLive.currentInningsNumber;
+    } else if (
+      inn2 &&
+      (inn2.balls > 0 ||
+        inn2.runs > 0 ||
+        inn2.wickets > 0 ||
+        (inn2.status === "LIVE" && inn1?.status === "COMPLETED") ||
+        (match.status === "COMPLETED" && (inn2.balls > 0 || inn2.runs > 0 || inn2.wickets > 0)))
+    ) {
       activeInningsNumber = 2;
     } else {
       activeInningsNumber = 1;
@@ -188,12 +198,12 @@ export function buildBroadcastStateFromMatch(
     const b1 = parsedLive.liveSummary.currentBatters[0];
     const b2 = parsedLive.liveSummary.currentBatters[1];
     if (b1) {
-      strikerName = b1.name?.toUpperCase() || "BATTER";
+      strikerName = cleanPlayerDisplayName(b1.name || "").toUpperCase() || "BATTER";
       strikerRuns = String(b1.runs ?? 0);
       strikerBalls = String(b1.balls ?? 0);
     }
     if (b2) {
-      nonStrikerName = b2.name?.toUpperCase() || "NON-STRIKER";
+      nonStrikerName = cleanPlayerDisplayName(b2.name || "").toUpperCase() || "NON-STRIKER";
       nonStrikerRuns = String(b2.runs ?? 0);
       nonStrikerBalls = String(b2.balls ?? 0);
     }
@@ -202,12 +212,12 @@ export function buildBroadcastStateFromMatch(
     const notOutBatters = battingStats.filter((s: any) => !s.isOut);
     const activeBatters = notOutBatters.length >= 2 ? notOutBatters : battingStats;
     if (activeBatters[0]) {
-      strikerName = activeBatters[0].player?.displayName?.toUpperCase() || "BATTER";
+      strikerName = cleanPlayerDisplayName(activeBatters[0].player?.displayName || "").toUpperCase() || "BATTER";
       strikerRuns = String(activeBatters[0].runs ?? 0);
       strikerBalls = String(activeBatters[0].ballsFaced ?? 0);
     }
     if (activeBatters[1]) {
-      nonStrikerName = activeBatters[1].player?.displayName?.toUpperCase() || "NON-STRIKER";
+      nonStrikerName = cleanPlayerDisplayName(activeBatters[1].player?.displayName || "").toUpperCase() || "NON-STRIKER";
       nonStrikerRuns = String(activeBatters[1].runs ?? 0);
       nonStrikerBalls = String(activeBatters[1].ballsFaced ?? 0);
     }
@@ -219,14 +229,14 @@ export function buildBroadcastStateFromMatch(
 
   if (parsedLive?.liveSummary?.currentBowler) {
     const cb = parsedLive.liveSummary.currentBowler;
-    bowlerName = cb.name?.toUpperCase() || "BOWLER";
+    bowlerName = cleanPlayerDisplayName(cb.name || "").toUpperCase() || "BOWLER";
     bowlerFigures = `${cb.wickets ?? 0}/${cb.runs ?? 0}`;
     bowlerOvers = String(cb.overs || "0.0");
   } else {
     const bowlingStats = innStats.filter((s: any) => s.teamId === bowlingTeam.id && s.ballsBowled > 0);
     if (bowlingStats.length) {
       const topBowler = bowlingStats.sort((a: any, b: any) => b.ballsBowled - a.ballsBowled)[0];
-      bowlerName = topBowler.player?.displayName?.toUpperCase() || "BOWLER";
+      bowlerName = cleanPlayerDisplayName(topBowler.player?.displayName || "").toUpperCase() || "BOWLER";
       bowlerFigures = `${topBowler.wickets ?? 0}/${topBowler.runsConceded ?? 0}`;
       bowlerOvers = `${Math.floor(topBowler.ballsBowled / 6)}.${topBowler.ballsBowled % 6}`;
     }
@@ -235,14 +245,18 @@ export function buildBroadcastStateFromMatch(
   // Fall of Wickets
   let fow: Array<[string, string, string]> = [];
   if (parsedLive?.fowByInnings?.[activeInningsNumber]?.length) {
-    fow = parsedLive.fowByInnings[activeInningsNumber];
+    fow = parsedLive.fowByInnings[activeInningsNumber].map((row: [string, string, string]) => [
+      row[0],
+      cleanPlayerDisplayName(row[1]) || row[1],
+      row[2],
+    ]);
   } else {
     const dismissed = innStats
       .filter((s: any) => s.teamId === battingTeam.id && s.isOut)
       .sort((a: any, b: any) => a.id - b.id);
     fow = dismissed.map((s: any, idx: number) => [
       `${idx + 1}/${s.runs}`,
-      s.player?.displayName || `Batter ${idx + 1}`,
+      cleanPlayerDisplayName(s.player?.displayName || "") || `Batter ${idx + 1}`,
       `${Math.floor((s.ballsFaced || 0) / 6)}.${(s.ballsFaced || 0) % 6} OV`,
     ]);
   }
@@ -253,7 +267,7 @@ export function buildBroadcastStateFromMatch(
     .map((s: any) => {
       const sr = s.ballsFaced > 0 ? ((s.runs / s.ballsFaced) * 100).toFixed(1) : "0.0";
       return [
-        s.player?.displayName || "Player",
+        cleanPlayerDisplayName(s.player?.displayName || "") || "Player",
         `${s.runs}${s.isOut ? "" : "*"}`,
         String(s.ballsFaced || 0),
         String(s.fours || 0),
@@ -274,7 +288,7 @@ export function buildBroadcastStateFromMatch(
       const legalBalls = whole * 6 + balls;
       const econ = legalBalls > 0 ? (Number(bw.runs || 0) / (legalBalls / 6)).toFixed(2) : "0.00";
       return [
-        String(p.name || "Bowler"),
+        cleanPlayerDisplayName(String(p.name || "")) || "Bowler",
         overs,
         String(bw.maidens || 0),
         String(bw.runs || 0),
@@ -288,7 +302,7 @@ export function buildBroadcastStateFromMatch(
     .map((s: any) => {
       const ov = `${Math.floor(s.ballsBowled / 6)}.${s.ballsBowled % 6}`;
       const econ = s.ballsBowled > 0 ? (s.runsConceded / (s.ballsBowled / 6)).toFixed(2) : "0.00";
-      return [s.player?.displayName || "Bowler", ov, String(s.maidens || 0), String(s.runsConceded || 0), String(s.wickets || 0), econ];
+      return [cleanPlayerDisplayName(s.player?.displayName || "") || "Bowler", ov, String(s.maidens || 0), String(s.runsConceded || 0), String(s.wickets || 0), econ];
     });
 
   const bowling = liveBowling.length ? liveBowling : databaseBowling;
@@ -314,9 +328,21 @@ export function buildBroadcastStateFromMatch(
   } else if (parsedLive?.oversByInnings?.[activeInningsNumber]?.at?.(-1)?.balls?.length) {
     const activeOvers = parsedLive.oversByInnings[activeInningsNumber];
     recent = [...activeOvers[activeOvers.length - 1].balls];
-  } else if (bOvers > 0) {
-    const ballsInOver = bOvers % 6 || 6;
-    recent = ["0", "1", "0", "1", "4", "W"].slice(0, ballsInOver);
+  } else if (Array.isArray(match.scoreEvents) && match.scoreEvents.length > 0) {
+    const currentOverIndex = Math.floor(Math.max(0, bOvers - 1) / 6);
+    const overEvents = match.scoreEvents
+      .filter((e: any) => (e.innings === undefined || e.innings === activeInningsNumber) && e.overNumber === currentOverIndex)
+      .sort((a: any, b: any) => (a.ballNumber || 0) - (b.ballNumber || 0) || (a.id || 0) - (b.id || 0));
+    if (overEvents.length > 0) {
+      recent = overEvents.map((e: any) => {
+        if (e.isWicket) return "W";
+        if (e.extraType === "WIDE") return e.runs > 1 ? `${e.runs}WD` : "WD";
+        if (e.extraType === "NO_BALL") return e.runs > 1 ? `${e.runs}NB` : "NB";
+        if (e.extraType === "BYE") return `${e.runs || 1}B`;
+        if (e.extraType === "LEG_BYE") return `${e.runs || 1}LB`;
+        return String(e.runs ?? 0);
+      });
+    }
   }
 
   // Bowler extras (wides and no balls)
@@ -334,7 +360,37 @@ export function buildBroadcastStateFromMatch(
     if (wdInRecent > bowlerWides) bowlerWides = wdInRecent;
   }
 
-  const strikerStat = summary.find((row) => row[0].toUpperCase() === strikerName.toUpperCase());
+  const strikerStat = summary.find((row: string[]) => row[0].toUpperCase() === strikerName.toUpperCase());
+  const nonStrikerStat = summary.find((row: string[]) => row[0].toUpperCase() === nonStrikerName.toUpperCase());
+  const bowlerRow = bowling.find((row: string[]) => row[0].toUpperCase() === bowlerName.toUpperCase());
+  const strikerFours = parsedLive?.liveSummary?.currentBatters?.[0]?.fours ?? (strikerStat ? Number(strikerStat[3]) : 0);
+  const strikerSixes = parsedLive?.liveSummary?.currentBatters?.[0]?.sixes ?? (strikerStat ? Number(strikerStat[4]) : 0);
+  const nonStrikerFours = parsedLive?.liveSummary?.currentBatters?.[1]?.fours ?? (nonStrikerStat ? Number(nonStrikerStat[3]) : 0);
+  const nonStrikerSixes = parsedLive?.liveSummary?.currentBatters?.[1]?.sixes ?? (nonStrikerStat ? Number(nonStrikerStat[4]) : 0);
+  const bowlerMaidens = parsedLive?.liveSummary?.currentBowler?.maidens ?? (bowlerRow ? Number(bowlerRow[2]) : 0);
+
+  // Partnership runs and balls since the last Fall of Wicket (or start of innings)
+  let partnershipRuns = Number(strikerRuns || 0) + Number(nonStrikerRuns || 0);
+  let partnershipBalls = Number(strikerBalls || 0) + Number(nonStrikerBalls || 0);
+  if (fow.length > 0) {
+    const lastFow = fow[fow.length - 1];
+    const fowScoreParts = String(lastFow[0] || "").split("/");
+    const lastWktRuns = Number(fowScoreParts.length > 1 ? fowScoreParts[1] : fowScoreParts[0]);
+    const fowOvMatch = String(lastFow[2] || "").match(/(\d+)(?:\.(\d+))?/);
+    if (!Number.isNaN(lastWktRuns) && runs >= lastWktRuns) {
+      partnershipRuns = runs - lastWktRuns;
+    }
+    if (fowOvMatch) {
+      const wktBalls = (Number(fowOvMatch[1]) || 0) * 6 + (Number(fowOvMatch[2]) || 0);
+      if (bOvers >= wktBalls) {
+        partnershipBalls = bOvers - wktBalls;
+      }
+    }
+  } else if (runs > 0 || bOvers > 0) {
+    partnershipRuns = runs;
+    partnershipBalls = bOvers;
+  }
+
   const profile = strikerStat
     ? [
         ["RUNS", strikerStat[1].replace("*", "")],
@@ -345,11 +401,11 @@ export function buildBroadcastStateFromMatch(
       ]
     : [["RUNS", strikerRuns], ["BALLS", strikerBalls]];
   const compare = [
-    ["RUNS", strikerRuns, String(parsedLive?.liveSummary?.currentBowler?.runs ?? 0)],
+    ["RUNS", strikerRuns, String(parsedLive?.liveSummary?.currentBowler?.runs ?? bowlerRow?.[3] ?? 0)],
     ["BALLS / OVERS", strikerBalls, bowlerOvers],
-    ["STRIKE RATE / ECON", strikerStat?.[5] || "0.0", parsedLive?.liveSummary?.currentBowler?.economy?.toFixed?.(2) || "0.00"],
-    ["4s / WICKETS", strikerStat?.[3] || "0", String(parsedLive?.liveSummary?.currentBowler?.wickets ?? 0)],
-    ["6s / MAIDENS", strikerStat?.[4] || "0", String(parsedLive?.liveSummary?.currentBowler?.maidens ?? 0)],
+    ["STRIKE RATE / ECON", strikerStat?.[5] || "0.0", parsedLive?.liveSummary?.currentBowler?.economy?.toFixed?.(2) || bowlerRow?.[5] || "0.00"],
+    ["4s / WICKETS", strikerStat?.[3] || String(strikerFours), String(parsedLive?.liveSummary?.currentBowler?.wickets ?? bowlerRow?.[4] ?? 0)],
+    ["6s / MAIDENS", strikerStat?.[4] || String(strikerSixes), String(bowlerMaidens)],
   ];
 
   const inningsScores = [inn1, inn2].filter(Boolean).map((inning: any) => ({
@@ -379,14 +435,15 @@ export function buildBroadcastStateFromMatch(
       inningsScores,
       resultText: match.resultText || parsedLive?.resultSummary || null,
       playerOfMatch: match.playerOfMatch || null,
-      teamARoster: (battingTeam.players || []).map((player: any) => player.displayName),
-      teamBRoster: (bowlingTeam.players || []).map((player: any) => player.displayName),
+      teamARoster: (battingTeam.players || []).map((player: any) => cleanPlayerDisplayName(player.displayName) || player.displayName),
+      teamBRoster: (bowlingTeam.players || []).map((player: any) => cleanPlayerDisplayName(player.displayName) || player.displayName),
     },
     score: {
       runs,
       wickets,
       overs: ovStr,
       recent,
+      oversHistory: activeOverRows,
       target: target || null,
     },
     live: {
@@ -395,14 +452,21 @@ export function buildBroadcastStateFromMatch(
       strikerName,
       strikerRuns,
       strikerBalls,
+      strikerFours: String(strikerFours),
+      strikerSixes: String(strikerSixes),
       nonStrikerName,
       nonStrikerRuns,
       nonStrikerBalls,
+      nonStrikerFours: String(nonStrikerFours),
+      nonStrikerSixes: String(nonStrikerSixes),
       bowlerName,
       bowlerFigures,
       bowlerOvers,
+      bowlerMaidens: String(bowlerMaidens),
       bowlerNoBalls: String(bowlerNoBalls),
       bowlerWides: String(bowlerWides),
+      partnershipRuns: String(partnershipRuns),
+      partnershipBalls: String(partnershipBalls),
       requirement,
       matchLabel: `${match.title} · MATCH ${match.matchNumber || "01"}`,
       venue: match.venue || "TU INTERNATIONAL CRICKET GROUND, KIRTIPUR",
@@ -440,13 +504,62 @@ export async function syncMatchToBroadcastDb(
   const generatedUi = (generated.ui && typeof generated.ui === "object") ? (generated.ui as Record<string, unknown>) : {};
   const existingUi = (existingState?.ui && typeof existingState.ui === "object") ? (existingState.ui as Record<string, unknown>) : {};
 
+  // Preserve real recent deliveries if we are updating the same match/innings and generated recent is empty placeholders
+  const genScore = (generated.score && typeof generated.score === "object") ? { ...(generated.score as Record<string, any>) } : {};
+  const genRecent = Array.isArray(genScore.recent) ? genScore.recent : [];
+  const isGenRecentPlaceholder = genRecent.length === 0 || genRecent.every((r: string) => r === "-" || r === "•");
+  if (
+    isGenRecentPlaceholder &&
+    Number(existingState?.match?.matchId) === Number(match.id) &&
+    Number(existingState?.match?.inningsNumber) === Number((generated.match as any)?.inningsNumber) &&
+    Array.isArray(existingState?.score?.recent) &&
+    existingState.score.recent.some((r: string) => r !== "-" && r !== "•")
+  ) {
+    genScore.recent = existingState.score.recent;
+  }
+
+  let pointsRows: Array<[string, string, string, string, string, string, string]> | undefined = undefined;
+  try {
+    const tournamentId = match.tournamentId || 3;
+    const rawStandings = await client.tournamentTeam.findMany({
+      where: { tournamentId },
+      orderBy: [{ points: "desc" }, { netRunRate: "desc" }],
+      include: { team: true },
+    });
+    if (Array.isArray(rawStandings) && rawStandings.length > 0) {
+      const seenCodes = new Set<string>();
+      const rows: Array<[string, string, string, string, string, string, string]> = [];
+      for (const s of rawStandings) {
+        const brand = getFranchiseBrand(s.team?.name || s.team?.shortName);
+        if (!seenCodes.has(brand.code)) {
+          seenCodes.add(brand.code);
+          const nrrNum = Number(s.netRunRate || 0);
+          const nrrStr = `${nrrNum >= 0 ? "+" : ""}${nrrNum.toFixed(3)}`;
+          rows.push([
+            String(rows.length + 1),
+            brand.code,
+            String(s.played ?? 0),
+            String(s.won ?? 0),
+            String(s.lost ?? 0),
+            String(s.points ?? 0),
+            nrrStr,
+          ]);
+        }
+      }
+      if (rows.length > 0) {
+        pointsRows = rows;
+      }
+    }
+  } catch {}
+
   const payload: BroadcastState = {
     ...generated,
+    score: genScore,
     ui: {
       ...generatedUi,
       ...existingUi,
     },
-    ...(existingState?.points ? { points: existingState.points } : {}),
+    ...(pointsRows ? { points: pointsRows } : existingState?.points ? { points: existingState.points } : {}),
   };
 
   await client.broadcastState.upsert({

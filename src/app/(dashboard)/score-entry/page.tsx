@@ -75,11 +75,11 @@ type StatForm = {
 };
 
 const chaseTargetFor = (firstInnings: InnForm): string => {
-  const hasStarted = firstInnings.status !== "NOT_STARTED"
-    || Number(firstInnings.runs) > 0
-    || Number(firstInnings.balls) > 0
-    || Number(firstInnings.wickets) > 0;
-  return hasStarted ? String(Number(firstInnings.runs || 0) + 1) : "";
+  const isFirstInningsDone =
+    firstInnings.status === "COMPLETED" ||
+    Number(firstInnings.wickets) >= 10 ||
+    Number(firstInnings.balls) >= 120;
+  return isFirstInningsDone ? String(Number(firstInnings.runs || 0) + 1) : "";
 };
 
 const blankStat: StatForm = {
@@ -120,13 +120,21 @@ const toInn = (match: Match, n: number): InnForm => {
     teamId = (i?.teamId && i.teamId !== firstBattingTeamId) ? i.teamId : opposingTeamId;
   }
 
+  const inn1Record = match.innings?.find((x) => x.inningsNumber === 1);
+  const isInn1Complete =
+    inn1Record?.status === "COMPLETED" ||
+    (inn1Record?.wickets ?? 0) >= 10 ||
+    (inn1Record?.balls ?? 0) >= 120 ||
+    match.status === "COMPLETED";
+  const hasInn2Started = (i?.balls ?? 0) > 0 || (i?.runs ?? 0) > 0 || (i?.wickets ?? 0) > 0 || i?.status === "LIVE" || i?.status === "COMPLETED";
+
   return {
     teamId: String(teamId),
     runs: String(i?.runs ?? 0),
     wickets: String(i?.wickets ?? 0),
     balls: String(i?.balls ?? 0),
     extras: String(i?.extras ?? 0),
-    target: i?.target ? String(i.target) : "",
+    target: n === 2 && (isInn1Complete || hasInn2Started) && i?.target ? String(i.target) : "",
     status:
       i?.status ??
       (n === 1 && match.status === "LIVE" ? "LIVE" : "NOT_STARTED"),
@@ -182,6 +190,12 @@ export default function ScoreEntryPage() {
   const [wsConnected, setWsConnected] = useState(false);
   const [wsEnginePort, setWsEnginePort] = useState<string>("");
   const wsRef = useRef<WebSocket | null>(null);
+  const selectedIdRef = useRef<number | null>(null);
+  const loadDetailRef = useRef<((id: number) => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   // Undo history tracking
   const [undoHistory, setUndoHistory] = useState<{ groupId: string; label: string; createdAt: string; changes: number }[]>([]);
@@ -234,6 +248,21 @@ export default function ScoreEntryPage() {
             setWsEnginePort(parsed.port ? `:${parsed.port}` : "LIVE");
           } catch {
             setWsEnginePort("LIVE");
+          }
+        };
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.action === "updateData" || msg.action === "init") {
+              const incomingState = msg.data || msg.state || msg;
+              const incomingMatchId = Number(incomingState?.match?.matchId || 0);
+              const currentId = Number(selectedIdRef.current || 0);
+              if (currentId > 0 && (!incomingMatchId || incomingMatchId === currentId)) {
+                loadDetailRef.current?.(currentId);
+              }
+            }
+          } catch {
+            // ignore non-json frames
           }
         };
         ws.onclose = () => {
@@ -303,53 +332,119 @@ export default function ScoreEntryPage() {
   }, [loadMatches]);
 
   // Load match detail
-  const loadDetail = useCallback(async (id: number) => {
-    setDetailLoading(true);
-    try {
-      const m = await api<Match>(`/api/matches/${id}`);
-      setMatch(m);
-      const i1 = toInn(m, 1);
-      const i2 = toInn(m, 2);
-      if (!i2.target) i2.target = chaseTargetFor(i1);
-      setInn1(i1);
-      setInn2(i2);
+  const loadDetail = useCallback(
+    async (
+      id: number,
+      liveHint?: { strikerName?: string; nonStrikerName?: string; bowlerName?: string },
+    ) => {
+      setDetailLoading(true);
+      try {
+        const [m, broadcastRes] = await Promise.all([
+          api<Match>(`/api/matches/${id}`),
+          !liveHint ? api<any>(`/api/broadcast/state?matchId=${id}`).catch(() => null) : Promise.resolve(null),
+        ]);
+        setMatch(m);
+        const i1 = toInn(m, 1);
+        const i2 = toInn(m, 2);
+        if (!i2.target) i2.target = chaseTargetFor(i1);
+        setInn1(i1);
+        setInn2(i2);
 
-      // Pick the live innings when a match is first loaded. Subsequent manual
-      // innings switches are not tied to this fetch callback.
-      const nextActiveInnings: 1 | 2 =
-        (i2.status === "LIVE" || (Number(i2.balls) > 0 && Number(i2.runs) > 0) || m.status === "COMPLETED") ? 2 : 1;
-      setActiveInnings(nextActiveInnings);
+        const nextActiveInnings: 1 | 2 =
+          i2.status === "LIVE" ||
+          (Number(i2.balls) > 0 && Number(i2.runs) > 0) ||
+          (m.status === "COMPLETED" && (Number(i2.balls) > 0 || Number(i2.runs) > 0))
+            ? 2
+            : 1;
+        setActiveInnings(nextActiveInnings);
 
-      // Default active team and players
-      const homeTeam = m.homeTeam;
-      const awayTeam = m.awayTeam;
-      const activeForm = nextActiveInnings === 1 ? i1 : i2;
-      const battingTeam = activeForm.teamId === String(homeTeam.id) ? homeTeam : awayTeam;
-      const bowlingTeam = activeForm.teamId === String(homeTeam.id) ? awayTeam : homeTeam;
+        const homeTeam = m.homeTeam;
+        const awayTeam = m.awayTeam;
+        const activeForm = nextActiveInnings === 1 ? i1 : i2;
+        const battingTeam = activeForm.teamId === String(homeTeam.id) ? homeTeam : awayTeam;
+        const bowlingTeam = activeForm.teamId === String(homeTeam.id) ? awayTeam : homeTeam;
 
-      if (battingTeam.players && battingTeam.players.length > 0) {
-        const battingIds = new Set(battingTeam.players.map((player) => String(player.id)));
-        setStrikerId((current) => battingIds.has(current) ? current : String(battingTeam.players?.[0]?.id || ""));
-        setNonStrikerId((current) => battingIds.has(current) ? current : String(battingTeam.players?.[1]?.id || ""));
+        const hint = liveHint || {
+          strikerName: broadcastRes?.state?.live?.strikerName,
+          nonStrikerName: broadcastRes?.state?.live?.nonStrikerName,
+          bowlerName: broadcastRes?.state?.live?.bowlerName,
+        };
+
+        const findPlayerIdByName = (players: Player[] | undefined, rawName?: string): string => {
+          if (!players?.length || !rawName) return "";
+          const norm = rawName.trim().toLowerCase();
+          if (!norm || norm === "batter" || norm === "non-striker" || norm === "bowler") return "";
+          const exact = players.find((p) => p.displayName.trim().toLowerCase() === norm);
+          if (exact) return String(exact.id);
+          const partial = players.find(
+            (p) =>
+              p.displayName.toLowerCase().includes(norm) ||
+              norm.includes(p.displayName.toLowerCase()),
+          );
+          return partial ? String(partial.id) : "";
+        };
+
+        const innStats = (m.stats || []).filter((s) => Number(s.innings) === nextActiveInnings);
+        const activeBatStats = innStats
+          .filter((s) => String(s.teamId) === String(battingTeam.id) && !s.isOut && ((s.ballsFaced || 0) > 0 || (s.runs || 0) > 0));
+        const activeBowlStats = innStats
+          .filter((s) => String(s.teamId) === String(bowlingTeam.id) && (s.ballsBowled || 0) > 0)
+          .sort((a, b) => {
+            const aMidOver = (a.ballsBowled || 0) % 6 !== 0 ? 1 : 0;
+            const bMidOver = (b.ballsBowled || 0) % 6 !== 0 ? 1 : 0;
+            if (aMidOver !== bMidOver) return bMidOver - aMidOver;
+            return (b.ballsBowled || 0) - (a.ballsBowled || 0);
+          });
+
+        if (battingTeam.players && battingTeam.players.length > 0) {
+          const battingIds = new Set(battingTeam.players.map((player) => String(player.id)));
+          const hintStrikerId = findPlayerIdByName(battingTeam.players, hint.strikerName)
+            || (activeBatStats[0] ? String(activeBatStats[0].playerId) : "");
+          const hintNonStrikerId = findPlayerIdByName(battingTeam.players, hint.nonStrikerName)
+            || (activeBatStats[1] ? String(activeBatStats[1].playerId) : "");
+
+          setStrikerId((current) => {
+            if (hintStrikerId && battingIds.has(hintStrikerId)) return hintStrikerId;
+            return battingIds.has(current) ? current : String(battingTeam.players?.[0]?.id || "");
+          });
+          setNonStrikerId((current) => {
+            if (hintNonStrikerId && battingIds.has(hintNonStrikerId) && hintNonStrikerId !== hintStrikerId) {
+              return hintNonStrikerId;
+            }
+            return battingIds.has(current) ? current : String(battingTeam.players?.[1]?.id || "");
+          });
+        }
+        if (bowlingTeam.players && bowlingTeam.players.length > 0) {
+          const bowlingIds = new Set(bowlingTeam.players.map((player) => String(player.id)));
+          const hintBowlerId = findPlayerIdByName(bowlingTeam.players, hint.bowlerName)
+            || (activeBowlStats[0] ? String(activeBowlStats[0].playerId) : "");
+          setBowlerId((current) => {
+            if (hintBowlerId && bowlingIds.has(hintBowlerId)) return hintBowlerId;
+            return bowlingIds.has(current) ? current : String(bowlingTeam.players?.[0]?.id || "");
+          });
+        }
+
+        setStat((s) => ({
+          ...blankStat,
+          teamId: String(battingTeam.id),
+          playerId: String(battingTeam.players?.[0]?.id || ""),
+        }));
+        fetchUndoHistory(id);
+        return m;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not load match");
+      } finally {
+        setDetailLoading(false);
       }
-      if (bowlingTeam.players && bowlingTeam.players.length > 0) {
-        const bowlingIds = new Set(bowlingTeam.players.map((player) => String(player.id)));
-        setBowlerId((current) => bowlingIds.has(current) ? current : String(bowlingTeam.players?.[0]?.id || ""));
-      }
+    },
+    [fetchUndoHistory],
+  );
 
-      setStat((s) => ({
-        ...blankStat,
-        teamId: String(battingTeam.id),
-        playerId: String(battingTeam.players?.[0]?.id || ""),
-      }));
-      fetchUndoHistory(id);
-      return m;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load match");
-    } finally {
-      setDetailLoading(false);
-    }
-  }, [fetchUndoHistory]);
+  useEffect(() => {
+    loadDetailRef.current = async (id: number) => {
+      await loadDetail(id);
+    };
+  }, [loadDetail]);
 
   useEffect(() => {
     if (selectedId) loadDetail(selectedId);
@@ -366,21 +461,35 @@ export default function ScoreEntryPage() {
           success: boolean;
           sourceUrl: string;
           match: Match;
+          broadcastState?: any;
           parsed: any;
         }>(`/api/matches/${selectedId}/sync-source`, {
           method: "POST",
-          body: jsonBody({ forceOverwrite: force }),
+          body: jsonBody({ forceOverwrite: true }),
         });
 
         if (res.match) {
-          const fresh = await loadDetail(selectedId);
+          const liveHint = {
+            strikerName:
+              res.parsed?.liveSummary?.currentBatters?.[0]?.name ||
+              res.broadcastState?.live?.strikerName,
+            nonStrikerName:
+              res.parsed?.liveSummary?.currentBatters?.[1]?.name ||
+              res.broadcastState?.live?.nonStrikerName,
+            bowlerName:
+              res.parsed?.liveSummary?.currentBowler?.name ||
+              res.broadcastState?.live?.bowlerName,
+          };
+          const fresh = await loadDetail(selectedId, liveHint);
           // Automatic source polling must not overwrite authoritative source
           // state with stale local player selections. Manual sync can publish
           // the score-entry state explicitly.
-          if (publishBroadcast) await syncMatchToBroadcast(fresh || res.match);
+          if (publishBroadcast && !res.broadcastState) {
+            await syncMatchToBroadcast(fresh || res.match);
+          }
           const timeStr = new Date().toLocaleTimeString();
           setCricNepalLastSync(timeStr);
-          setCricNepalSyncMsg(`Synced with CricNepal at ${timeStr}`);
+          setCricNepalSyncMsg(`Synced with live source at ${timeStr}`);
         }
       } catch (err) {
         console.warn("CricNepal match sync failed:", err);
@@ -392,12 +501,13 @@ export default function ScoreEntryPage() {
     [selectedId, loadDetail]
   );
 
-  // Auto-Sync polling loop every 20 seconds while enabled
+  // Auto-Sync polling loop while enabled
   useEffect(() => {
     if (!cricNepalAutoSync || !selectedId) return;
+    void handleCricNepalSync(true, false);
     const timer = setInterval(() => {
-      void handleCricNepalSync(false, false);
-    }, 20000);
+      void handleCricNepalSync(true, false);
+    }, 10000);
     return () => clearInterval(timer);
   }, [cricNepalAutoSync, selectedId, handleCricNepalSync]);
 
@@ -548,10 +658,18 @@ export default function ScoreEntryPage() {
     const nonStrikerStat = innStats.find((s) => String(s.playerId) === effectiveNonStrikerId);
     const bowlerStat = innStats.find((s) => String(s.playerId) === bowlerId);
 
-    const ballsInOver = bOvers % 6 || (bOvers > 0 ? 6 : 0);
-    const defaultRecent = isMatchCompleted || bOvers > 0
-      ? ["0", "1", "0", "1", "4", "W"].slice(0, ballsInOver || 6)
-      : ["-", "-", "-", "-", "-", "-"];
+    const currentOverIdx = Math.floor(Math.max(0, bOvers - 1) / 6);
+    const recentEvents = ((sourceMatch as any).scoreEvents || [])
+      .filter((e: any) => (e.innings === undefined || e.innings === effActiveInnings) && e.overNumber === currentOverIdx)
+      .sort((a: any, b: any) => (a.ballNumber || 0) - (b.ballNumber || 0) || (a.id || 0) - (b.id || 0))
+      .map((e: any) => {
+        if (e.isWicket) return "W";
+        if (e.extraType === "WIDE") return e.runs > 1 ? `${e.runs}WD` : "WD";
+        if (e.extraType === "NO_BALL") return e.runs > 1 ? `${e.runs}NB` : "NB";
+        if (e.extraType === "BYE") return `${e.runs || 1}B`;
+        if (e.extraType === "LEG_BYE") return `${e.runs || 1}LB`;
+        return String(e.runs ?? 0);
+      });
 
     const payload = {
       match: {
@@ -567,7 +685,7 @@ export default function ScoreEntryPage() {
         wickets: Number(current.wickets) || 0,
         overs: ovStr,
         target: target || null,
-        recent: defaultRecent,
+        ...(recentEvents.length > 0 ? { recent: recentEvents } : bOvers === 0 ? { recent: ["-", "-", "-", "-", "-", "-"] } : {}),
       },
       live: {
         strikerName: striker?.displayName?.toUpperCase() || innStats[0]?.player?.displayName?.toUpperCase() || "BATTER",
@@ -814,12 +932,13 @@ export default function ScoreEntryPage() {
       status: "LIVE",
     };
 
-    // The chase target always follows the first-innings score. Keeping this in
-    // the same state as quick scoring makes the detailed form a live reflection
-    // of the controls above it instead of a second, stale score source.
+    const isInn1Done = activeInnings === 1 && (result.wickets >= 10 || result.balls >= 120);
+    if (isInn1Done) {
+      nextInn.status = "COMPLETED";
+    }
     const nextChaseTarget = activeInnings === 1
-      ? String(result.runs + 1)
-      : inn1 ? chaseTargetFor(inn1) : "";
+      ? (isInn1Done ? String(result.runs + 1) : "")
+      : inn1 ? (inn1.runs ? String(Number(inn1.runs) + 1) : chaseTargetFor(inn1)) : "";
     nextInn.target = activeInnings === 2 ? (nextInn.target || nextChaseTarget) : "";
 
     if (activeInnings === 1) {
@@ -849,7 +968,7 @@ export default function ScoreEntryPage() {
         body: jsonBody(inningsPayload(activeInnings, nextInn, undoGroup, undoLabel)),
       });
 
-      if (activeInnings === 1 && inn2) {
+      if (activeInnings === 1 && isInn1Done && inn2) {
         const nextSecondInnings = { ...inn2, target: nextChaseTarget };
         await api("/api/innings", {
           method: "POST",
@@ -996,9 +1115,13 @@ export default function ScoreEntryPage() {
       status: "LIVE",
     };
 
+    const isInn1Done = activeInnings === 1 && (result.wickets >= 10 || result.balls >= 120);
+    if (isInn1Done) {
+      nextInn.status = "COMPLETED";
+    }
     const nextChaseTarget = activeInnings === 1
-      ? String(result.runs + 1)
-      : inn1 ? chaseTargetFor(inn1) : "";
+      ? (isInn1Done ? String(result.runs + 1) : "")
+      : inn1 ? (inn1.runs ? String(Number(inn1.runs) + 1) : chaseTargetFor(inn1)) : "";
     nextInn.target = activeInnings === 2 ? (nextInn.target || nextChaseTarget) : "";
 
     if (activeInnings === 1) {
@@ -1025,7 +1148,7 @@ export default function ScoreEntryPage() {
         body: jsonBody(inningsPayload(activeInnings, nextInn, undoGroup, undoLabel)),
       });
 
-      if (activeInnings === 1 && inn2) {
+      if (activeInnings === 1 && isInn1Done && inn2) {
         const nextSecondInnings = { ...inn2, target: nextChaseTarget };
         await api("/api/innings", {
           method: "POST",
@@ -1145,9 +1268,10 @@ export default function ScoreEntryPage() {
       status: "LIVE",
     };
 
+    const isInn1Done = activeInnings === 1 && (Number(current.wickets) >= 10 || Number(current.balls) >= 120 || current.status === "COMPLETED");
     const nextChaseTarget = activeInnings === 1
-      ? String(nextRuns + 1)
-      : inn1 ? chaseTargetFor(inn1) : "";
+      ? (isInn1Done ? String(nextRuns + 1) : "")
+      : inn1 ? (inn1.runs ? String(Number(inn1.runs) + 1) : chaseTargetFor(inn1)) : "";
     nextInn.target = activeInnings === 2 ? (nextInn.target || nextChaseTarget) : "";
 
     if (activeInnings === 1) {
@@ -1172,7 +1296,7 @@ export default function ScoreEntryPage() {
         body: jsonBody(inningsPayload(activeInnings, nextInn, undoGroup, undoLabel)),
       });
 
-      if (activeInnings === 1 && inn2) {
+      if (activeInnings === 1 && isInn1Done && inn2) {
         const nextSecondInnings = { ...inn2, target: nextChaseTarget };
         await api("/api/innings", {
           method: "POST",

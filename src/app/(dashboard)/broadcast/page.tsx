@@ -349,7 +349,8 @@ export default function BroadcastControllerPage() {
         nextScoreMode = payload.mode as any;
       }
 
-      const incoming = action === "updateData" || action === "dataUpdated" || action === "automation"
+      const isDataCue = action === "updateData" || action === "dataUpdated" || action === "scoreUpdate";
+      const incoming = isDataCue || action === "automation"
         ? ((payload.payload as Record<string, any> | undefined) || payload)
         : {};
       const persistedMatch = { teamA, teamB, ...(incoming.match || {}) };
@@ -373,11 +374,8 @@ export default function BroadcastControllerPage() {
       };
 
       const incomingUi = incoming.ui && typeof incoming.ui === "object" ? incoming.ui : {};
-      fetch("/api/broadcast/state", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          state: {
+      const stateToPersist = isDataCue
+        ? {
             ...incoming,
             match: persistedMatch,
             score: persistedScore,
@@ -389,7 +387,23 @@ export default function BroadcastControllerPage() {
               autoSync: typeof incomingUi.autoSync === "boolean" ? incomingUi.autoSync : season.autoSync,
               autoSpeed: Number(incomingUi.autoSpeed) || autoSpeed,
             },
-          },
+          }
+        : {
+            ...incoming,
+            ui: {
+              ...incomingUi,
+              scoreMode: nextScoreMode,
+              graphic: nextGraphic,
+              autoSync: typeof incomingUi.autoSync === "boolean" ? incomingUi.autoSync : season.autoSync,
+              autoSpeed: Number(incomingUi.autoSpeed) || autoSpeed,
+            },
+          };
+
+      fetch("/api/broadcast/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          state: stateToPersist,
           action,
           layer: (payload.id as string) || (payload.mode as string) || (action === "stopAll" ? "all" : null),
           payload,
@@ -720,29 +734,68 @@ export default function BroadcastControllerPage() {
     setRequirement(reqText);
 
     if (publish) {
-      sendCue("updateData", {
-        match: { matchId: m.id, teamA: battingCode, teamB: bowlingCode },
-        score: { runs: initRuns, wickets: initWickets, overs: initOvers },
-        live: {
-          venue: m.venue || "TU Cricket Ground, Kirtipur",
-          matchLabel: mLabel,
-          requirement: reqText,
-          strikerName: sName,
-          strikerRuns: sRuns,
-          strikerBalls: sBalls,
-          nonStrikerName: nsName,
-          nonStrikerRuns: nsRuns,
-          nonStrikerBalls: nsBalls,
-          bowlerName: bName,
-          bowlerFigures: bFigs,
-          bowlerOvers: bOvs,
-          rateText: crrText,
-          innings: innText,
-          tossText: tossMsg,
-          target: initTarget,
-        },
-        fow: matchFow,
-      });
+      void (async () => {
+        try {
+          if (isLive || isCompleted) {
+            const syncRes = await fetch(`/api/matches/${m.id}/sync-source`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ forceOverwrite: true }),
+            });
+            const syncJson = await syncRes.json().catch(() => null);
+            const syncedState = syncJson?.data?.broadcastState;
+            if (syncRes.ok && syncedState) {
+              applyState(syncedState);
+              sendCue("updateData", { payload: syncedState });
+              return;
+            }
+          }
+          const stateRes = await fetch(`/api/broadcast/state?matchId=${m.id}&sync=1`, { cache: "no-store" });
+          if (stateRes.ok) {
+            const stateJson = await stateRes.json();
+            if (stateJson?.state) {
+              applyState(stateJson.state);
+              sendCue("updateData", { payload: stateJson.state });
+              return;
+            }
+          }
+        } catch {}
+        sendCue("updateData", {
+          match: { matchId: m.id, teamA: battingCode, teamB: bowlingCode },
+          score: { runs: initRuns, wickets: initWickets, overs: initOvers },
+          live: {
+            venue: m.venue || "TU Cricket Ground, Kirtipur",
+            matchLabel: mLabel,
+            requirement: reqText,
+            strikerName: sName,
+            strikerRuns: sRuns,
+            strikerBalls: sBalls,
+            nonStrikerName: nsName,
+            nonStrikerRuns: nsRuns,
+            nonStrikerBalls: nsBalls,
+            bowlerName: bName,
+            bowlerFigures: bFigs,
+            bowlerOvers: bOvs,
+            rateText: crrText,
+            innings: innText,
+            tossText: tossMsg,
+            target: initTarget,
+          },
+          fow: matchFow,
+        });
+      })();
+    } else {
+      void (async () => {
+        try {
+          const stateRes = await fetch(`/api/broadcast/state?matchId=${m.id}`, { cache: "no-store" });
+          if (stateRes.ok) {
+            const stateJson = await stateRes.json();
+            if (stateJson?.state) {
+              applyState(stateJson.state);
+            }
+          }
+        } catch {}
+      })();
     }
 
     setAutoLogs((prev) => [

@@ -1,12 +1,13 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { PrismaClient } from "@prisma/client";
-import { DEFAULT_BROADCAST_STATE } from "../lib/broadcast-state";
+import { DEFAULT_BROADCAST_STATE, mergeBroadcastState } from "../lib/broadcast-state";
 
 const prisma = new PrismaClient();
-const PORT = Number(process.env.WS_PORT || 3001);
+const PORT = Number(process.env.WS_PORT || process.env.PORT || 3001);
 
 let latestState: any = structuredClone(DEFAULT_BROADCAST_STATE);
 let persistQueue: Promise<void> = Promise.resolve();
+let lastDbTimestamp = 0;
 
 const deliveryTokens: Record<string, { token: string; legal: boolean }> = {
   dot: { token: "0", legal: true },
@@ -42,6 +43,9 @@ async function initDbState() {
     });
     if (record?.state) {
       latestState = record.state;
+      if (record.updatedAt) {
+        lastDbTimestamp = new Date(record.updatedAt).getTime();
+      }
       console.log("[NPL WebSocket] Loaded initial broadcast state from MySQL database");
     } else {
       latestState = structuredClone(DEFAULT_BROADCAST_STATE);
@@ -59,11 +63,14 @@ function persistState(action: string, layer?: string, payload?: any) {
   // a slower delivery/action write cannot overwrite the scoreUpdate after it.
   persistQueue = persistQueue.then(async () => {
     try {
-      await (prisma as any).broadcastState.upsert({
+      const saved = await (prisma as any).broadcastState.upsert({
         where: { id: "current" },
         create: { id: "current", state: stateSnapshot },
         update: { state: stateSnapshot },
       });
+      if (saved?.updatedAt) {
+        lastDbTimestamp = Math.max(lastDbTimestamp, new Date(saved.updatedAt).getTime());
+      }
 
       await (prisma as any).broadcastEvent.create({
         data: {
@@ -106,7 +113,6 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
 
   // Poll database broadcastState periodically so auto-synced match updates from
   // Next.js or background sync immediately broadcast to all connected graphics
-  let lastDbTimestamp = 0;
   const pollTimer = setInterval(async () => {
     try {
       const record = await (prisma as any).broadcastState.findUnique({
@@ -134,7 +140,7 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
         }
       }
     } catch {}
-  }, 1000);
+  }, 500);
 
   wss.on("close", () => clearInterval(pollTimer));
 
@@ -203,18 +209,26 @@ export function startWebSocketServer(port = PORT): WebSocketServer {
           latestState.ui.scoreMode = "hidden";
           persistState("hideScores", "scoreMode", msg);
         } else if (actionType === "updateData" || actionType === "dataUpdated") {
-          const payload = msg.payload || msg.data || {};
-          latestState = {
-            ...(latestState || {}),
-            ...payload,
-            score: { ...(latestState?.score || {}), ...(payload.score || {}) },
-            live: { ...(latestState?.live || {}), ...(payload.live || {}) },
-            match: { ...(latestState?.match || {}), ...(payload.match || {}) },
-          };
-          if (payload.fow !== undefined) latestState.fow = payload.fow;
-          persistState("updateData", undefined, msg);
+          const rawPayload = msg.payload || msg.data || msg || {};
+          const { action: _a, type: _t, timestamp: _ts, ...cleanPayload } = rawPayload;
+          latestState = mergeBroadcastState(latestState || DEFAULT_BROADCAST_STATE, cleanPayload);
+          persistState("updateData", undefined, { ...msg, payload: latestState });
+          const enrichedText = JSON.stringify({
+            ...msg,
+            action: "updateData",
+            type: "updateData",
+            payload: latestState,
+            timestamp: Date.now(),
+          });
+          wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(enrichedText);
+            }
+          });
+          return;
         } else if (actionType === "scoreUpdate") {
-          latestState.score = { ...(latestState?.score || {}), ...(msg.data || msg.payload) };
+          const scorePayload = msg.data || msg.payload || msg.score || {};
+          latestState.score = { ...(latestState?.score || {}), ...scorePayload };
           persistState("scoreUpdate", undefined, msg);
         } else if (actionType === "action") {
           updateRecentDeliveries(msg.name || msg.data?.name || "");
