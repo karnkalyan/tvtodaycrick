@@ -262,21 +262,50 @@ export function buildBroadcastStateFromMatch(
       ];
     });
 
-  // Bowling summary scorecard
-  const bowling: Array<[string, string, string, string, string, string]> = innStats
+  // Bowling summary scorecard. Prefer the active innings' source feed: database
+  // stats can contain a previous/manual player selection and must not overwrite
+  // the live bowler card with stale details.
+  const liveBowling = (parsedLive?.playerPerformances || [])
+    .filter((p: any) => p.innings === activeInningsNumber && p.type === "BOWLER" && p.bowling)
+    .map((p: any): [string, string, string, string, string, string] => {
+      const bw = p.bowling;
+      const overs = String(bw.overs || "0.0");
+      const [whole, balls] = overs.split(".").map((v) => Number(v) || 0);
+      const legalBalls = whole * 6 + balls;
+      const econ = legalBalls > 0 ? (Number(bw.runs || 0) / (legalBalls / 6)).toFixed(2) : "0.00";
+      return [
+        String(p.name || "Bowler"),
+        overs,
+        String(bw.maidens || 0),
+        String(bw.runs || 0),
+        String(bw.wickets || 0),
+        String(bw.economy || econ),
+      ];
+    });
+
+  const databaseBowling: Array<[string, string, string, string, string, string]> = innStats
     .filter((s: any) => s.teamId === bowlingTeam.id && s.ballsBowled > 0)
     .map((s: any) => {
       const ov = `${Math.floor(s.ballsBowled / 6)}.${s.ballsBowled % 6}`;
       const econ = s.ballsBowled > 0 ? (s.runsConceded / (s.ballsBowled / 6)).toFixed(2) : "0.00";
-      return [
-        s.player?.displayName || "Bowler",
-        ov,
-        String(s.maidens || 0),
-        String(s.runsConceded || 0),
-        String(s.wickets || 0),
-        econ,
-      ];
+      return [s.player?.displayName || "Bowler", ov, String(s.maidens || 0), String(s.runsConceded || 0), String(s.wickets || 0), econ];
     });
+
+  const bowling = liveBowling.length ? liveBowling : databaseBowling;
+  if (parsedLive?.liveSummary?.currentBowler && !bowling.some((row: [string, string, string, string, string, string]) => row[0].toUpperCase() === bowlerName)) {
+    const cb = parsedLive.liveSummary.currentBowler;
+    const overs = String(cb.overs || "0.0");
+    const [whole, balls] = overs.split(".").map((v) => Number(v) || 0);
+    const legalBalls = whole * 6 + balls;
+    bowling.push([
+      bowlerName,
+      overs,
+      String(cb.maidens || 0),
+      String(cb.runs || 0),
+      String(cb.wickets || 0),
+      legalBalls > 0 ? (Number(cb.runs || 0) / (legalBalls / 6)).toFixed(2) : "0.00",
+    ]);
+  }
 
   // Recent deliveries - preserve all ball events in this over
   let recent: string[] = ["-", "-", "-", "-", "-", "-"];
